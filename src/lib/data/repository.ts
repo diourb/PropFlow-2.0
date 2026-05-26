@@ -17,8 +17,10 @@ import type {
   Workspace,
 } from "@/lib/types";
 import { getServerSupabase } from "@/lib/supabase/server";
+import { getServiceSupabase } from "@/lib/supabase/admin";
 import { hasSupabaseEnv } from "@/lib/supabase/env";
 import {
+  connectDemoIntegration,
   createDemoBooking,
   createDemoCleaningTask,
   createDemoGuestMaintenanceRequest,
@@ -32,11 +34,13 @@ import {
   deleteDemoMaintenanceRequest,
   deleteDemoOwner,
   deleteDemoProperty,
+  disconnectDemoIntegration,
   getDemoSnapshot,
   inviteDemoMember,
   markAllDemoNotificationsRead,
   markDemoNotificationRead,
   saveDemoNotificationPreferences,
+  removeDemoTeamMember,
   setDemoRole as setDemoStoreRole,
   submitDemoIssueReport,
   updateDemoBooking,
@@ -46,6 +50,7 @@ import {
   updateDemoMaintenanceRequest,
   updateDemoOwner,
   updateDemoProperty,
+  updateDemoTeamMemberRole,
   updateDemoWorkOrderStatus,
   updateDemoWorkspaceSettings,
 } from "./demo-store";
@@ -80,6 +85,78 @@ function numberValue(value: unknown, fallback = 0) {
 
 function moneyFromCents(value: unknown) {
   return Math.round(numberValue(value) / 100);
+}
+
+function dateValue(value: unknown): Date | null {
+  const raw = text(value);
+  if (!raw) return null;
+  const normalized = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T12:00:00` : raw;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function dateInput(value: unknown): string | undefined {
+  const raw = text(value).trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : undefined;
+}
+
+function dateTimeInput(value: unknown): string | undefined {
+  const raw = text(value).trim();
+  if (!raw) return undefined;
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+
+  const today = new Date().toISOString().slice(0, 10);
+  const timeOnly = new Date(`${today} ${raw}`);
+  return Number.isNaN(timeOnly.getTime()) ? undefined : timeOnly.toISOString();
+}
+
+function formatShortDate(date: Date) {
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+}
+
+function formatDateRange(startValue: unknown, endValue: unknown) {
+  const start = dateValue(startValue);
+  const end = dateValue(endValue);
+  if (start && end) return `${formatShortDate(start)} - ${formatShortDate(end)}`;
+  if (start) return formatShortDate(start);
+  if (end) return formatShortDate(end);
+  return "Dates pending";
+}
+
+function nightsBetween(startValue: unknown, endValue: unknown) {
+  const start = dateValue(startValue);
+  const end = dateValue(endValue);
+  if (!start || !end) return 0;
+  const days = Math.round((end.getTime() - start.getTime()) / 86_400_000);
+  return Math.max(days, 0);
+}
+
+function formatTime(value: unknown, fallback = "3:00 PM") {
+  const date = dateValue(value);
+  if (!date) return fallback;
+  return new Intl.DateTimeFormat("en", {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function relativeTime(value: unknown) {
+  const date = dateValue(value);
+  if (!date) return "Live";
+  const minutes = Math.max(0, Math.round((Date.now() - date.getTime()) / 60_000));
+  if (minutes < 60) return minutes <= 1 ? "Just now" : `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+function externalAsset(value: string) {
+  return value.startsWith("http://") || value.startsWith("https://") || value.startsWith("/");
 }
 
 const defaultChecklistItems = [
@@ -150,6 +227,8 @@ export async function getOperationsSnapshot(): Promise<OperationsSnapshot> {
     membersResponse,
     issueReportsResponse,
     attachmentsResponse,
+    profileResponse,
+    financialTransactionsResponse,
   ] = await Promise.all([
     supabase.from("properties").select("*").eq("workspace_id", workspaceId),
     supabase.from("bookings").select("*").eq("workspace_id", workspaceId),
@@ -167,6 +246,8 @@ export async function getOperationsSnapshot(): Promise<OperationsSnapshot> {
     supabase.from("memberships").select("*").eq("workspace_id", workspaceId),
     supabase.from("issue_reports").select("*").eq("workspace_id", workspaceId),
     supabase.from("attachments").select("*").eq("workspace_id", workspaceId),
+    supabase.from("profiles").select("id, full_name, email, avatar_url").eq("id", user.id).maybeSingle(),
+    supabase.from("financial_transactions").select("*").eq("workspace_id", workspaceId),
   ]);
 
   const ownerById = new Map(
@@ -218,50 +299,93 @@ export async function getOperationsSnapshot(): Promise<OperationsSnapshot> {
           : "active",
   };
 
-  const properties: Property[] = (propertiesResponse.data ?? []).map((property) => ({
-    id: text(property.id),
-    name: text(property.name, "Unnamed Property"),
-    location: [property.city, property.region].filter(Boolean).join(", ") || "Location pending",
-    address: text(property.address, "Address pending"),
-    owner: ownerById.get(text(property.owner_id)) ?? "Unassigned Owner",
-    status:
-      text(property.status) === "maintenance"
-        ? "Maintenance"
-        : text(property.status) === "vacant"
-          ? "Vacant"
-          : text(property.status) === "cleaning"
-            ? "Cleaning"
-            : "Occupied",
-    occupancy: 0,
-    revenueYtd: 0,
-    bedrooms: numberValue(property.bedrooms, 0),
-    bathrooms: numberValue(property.bathrooms, 0),
-    area: text(property.area, "Setup pending"),
-    rating: 0,
-    image: text(
-      property.image_url,
-      "https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=1200&q=80",
+  const storage = supabase.storage;
+  async function signedStorageUrl(bucket: string, path: unknown) {
+    const raw = text(path);
+    if (!raw || externalAsset(raw)) return raw;
+    const { data } = await storage.from(bucket).createSignedUrl(raw, 60 * 60);
+    return data?.signedUrl ?? "";
+  }
+
+  const propertyRevenue = new Map<string, number>();
+  for (const transaction of financialTransactionsResponse.data ?? []) {
+    const propertyId = text(transaction.property_id);
+    if (!propertyId) continue;
+    propertyRevenue.set(
+      propertyId,
+      (propertyRevenue.get(propertyId) ?? 0) + moneyFromCents(transaction.amount_cents),
+    );
+  }
+
+  const bookingNightsByProperty = new Map<string, number>();
+  for (const booking of bookingsResponse.data ?? []) {
+    const propertyId = text(booking.property_id);
+    if (!propertyId || text(booking.status) === "cancelled") continue;
+    bookingNightsByProperty.set(
+      propertyId,
+      (bookingNightsByProperty.get(propertyId) ?? 0) +
+        nightsBetween(booking.check_in, booking.check_out),
+    );
+  }
+
+  const propertyImageById = new Map(
+    await Promise.all(
+      (propertiesResponse.data ?? []).map(async (property) => {
+        const fallback =
+          "https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=1200&q=80";
+        const imagePath = text(property.image_url);
+        return [
+          text(property.id),
+          imagePath ? (await signedStorageUrl("properties", imagePath)) || fallback : fallback,
+        ] as const;
+      }),
     ),
-    model:
-      text(property.rental_model, "mixed") === "short_term"
-        ? "short_term"
-        : text(property.rental_model, "mixed") === "long_term"
-          ? "long_term"
-          : "mixed",
-  }));
+  );
+
+  const properties: Property[] = (propertiesResponse.data ?? []).map((property) => {
+    const propertyId = text(property.id);
+    const bookedNights = bookingNightsByProperty.get(propertyId) ?? 0;
+    return {
+      id: propertyId,
+      name: text(property.name, "Unnamed Property"),
+      location: [property.city, property.region].filter(Boolean).join(", ") || "Location pending",
+      address: text(property.address, "Address pending"),
+      owner: ownerById.get(text(property.owner_id)) ?? "Unassigned Owner",
+      status:
+        text(property.status) === "maintenance"
+          ? "Maintenance"
+          : text(property.status) === "vacant"
+            ? "Vacant"
+            : text(property.status) === "cleaning"
+              ? "Cleaning"
+              : "Occupied",
+      occupancy: Math.min(100, Math.round((bookedNights / 365) * 100)),
+      revenueYtd: propertyRevenue.get(propertyId) ?? 0,
+      bedrooms: numberValue(property.bedrooms, 0),
+      bathrooms: numberValue(property.bathrooms, 0),
+      area: text(property.area, "Setup pending"),
+      rating: 0,
+      image: propertyImageById.get(propertyId) ?? "https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=1200&q=80",
+      model:
+        text(property.rental_model, "mixed") === "short_term"
+          ? "short_term"
+          : text(property.rental_model, "mixed") === "long_term"
+            ? "long_term"
+            : "mixed",
+    };
+  });
 
   const bookings: Booking[] = (bookingsResponse.data ?? []).map((booking) => {
     const guest = guestById.get(text(booking.guest_id));
+    const nights = nightsBetween(booking.check_in, booking.check_out);
 
     return {
       id: text(booking.id),
       guest: text(booking.guest_name, guest?.name ?? "Guest"),
       email: guest?.email ?? "guest@example.com",
       property: propertyById.get(text(booking.property_id)) ?? "Unassigned Property",
-      stayDates:
-        [booking.check_in, booking.check_out].filter(Boolean).join(" - ") ||
-        "Dates pending",
-      nights: 0,
+      stayDates: formatDateRange(booking.check_in, booking.check_out),
+      nights,
       platform:
         text(booking.platform, "direct") === "airbnb"
           ? "Airbnb"
@@ -290,16 +414,40 @@ export async function getOperationsSnapshot(): Promise<OperationsSnapshot> {
     };
   });
 
-  const guests: Guest[] = (guestsResponse.data ?? []).map((guest) => ({
-    id: text(guest.id),
-    name: text(guest.name, "Guest"),
-    email: text(guest.email, "guest@example.com"),
-    phone: text(guest.phone, "No phone"),
-    status: "Past Guest",
-    stays: 0,
-    ltv: 0,
-    lastStay: "Live profile",
-  }));
+  const bookingsByGuestId = new Map<string, typeof bookingsResponse.data>();
+  for (const booking of bookingsResponse.data ?? []) {
+    const guestId = text(booking.guest_id);
+    if (!guestId) continue;
+    bookingsByGuestId.set(guestId, [...(bookingsByGuestId.get(guestId) ?? []), booking]);
+  }
+
+  const guests: Guest[] = (guestsResponse.data ?? []).map((guest) => {
+    const guestBookings = bookingsByGuestId.get(text(guest.id)) ?? [];
+    const totalValue = guestBookings.reduce(
+      (sum, booking) => sum + moneyFromCents(booking.amount_cents),
+      0,
+    );
+    const activeBooking = guestBookings.find((booking) =>
+      ["confirmed", "checked_in", "pending"].includes(text(booking.status)),
+    );
+
+    return {
+      id: text(guest.id),
+      name: text(guest.name, "Guest"),
+      email: text(guest.email, "guest@example.com"),
+      phone: text(guest.phone, "No phone"),
+      status: activeBooking
+        ? text(activeBooking.platform) === "lease"
+          ? "Tenant"
+          : "Active Booking"
+        : "Past Guest",
+      stays: guestBookings.length,
+      ltv: totalValue,
+      lastStay: activeBooking
+        ? `${formatDateRange(activeBooking.check_in, activeBooking.check_out)} - ${propertyById.get(text(activeBooking.property_id)) ?? "Property"}`
+        : "No active stay",
+    };
+  });
 
   const taskProgress = new Map<string, { completed: number; total: number }>();
   for (const item of checklistResponse.data ?? []) {
@@ -313,11 +461,15 @@ export async function getOperationsSnapshot(): Promise<OperationsSnapshot> {
 
   const cleaningTasks: CleaningTask[] = (cleaningTasksResponse.data ?? []).map((task) => {
     const progress = taskProgress.get(text(task.id)) ?? { completed: 0, total: 0 };
+    const propertyRow = (propertiesResponse.data ?? []).find(
+      (property) => text(property.id) === text(task.property_id),
+    );
+    const propertyId = text(task.property_id);
     return {
       id: text(task.id),
-      property: propertyById.get(text(task.property_id)) ?? text(task.title, "Cleaning task"),
-      address: "Address pending",
-      checkIn: "3:00 PM",
+      property: propertyById.get(propertyId) ?? text(task.title, "Cleaning task"),
+      address: text(propertyRow?.address, "Address pending"),
+      checkIn: formatTime(task.scheduled_for),
       type: text(task.title, "Turnover"),
       status:
         text(task.status) === "completed"
@@ -328,6 +480,7 @@ export async function getOperationsSnapshot(): Promise<OperationsSnapshot> {
       completed: progress.completed,
       total: progress.total,
       image:
+        propertyImageById.get(propertyId) ??
         "https://images.unsplash.com/photo-1600210492486-724fe5c67fb0?auto=format&fit=crop&w=1200&q=80",
     };
   });
@@ -342,30 +495,40 @@ export async function getOperationsSnapshot(): Promise<OperationsSnapshot> {
   }));
 
   const maintenanceRequests: MaintenanceRequest[] = (maintenanceResponse.data ?? []).map(
-    (request) => ({
-      id: text(request.id),
-      property: propertyById.get(text(request.property_id)) ?? "Unassigned Property",
-      location: "Live request",
-      title: text(request.title, "Maintenance request"),
-      description: text(request.description, "No description"),
-      priority:
-        text(request.priority) === "critical"
-          ? "Critical"
-          : text(request.priority) === "high"
-            ? "High Priority"
-            : "Routine",
-      status:
-        text(request.status) === "completed"
-          ? "completed"
-          : text(request.status) === "awaiting_parts"
-            ? "awaiting_parts"
-            : text(request.status) === "in_progress"
-              ? "in_progress"
-              : "urgent",
-      reportedAgo: "Live",
-      estimate: "TBD",
-      assignee: "Unassigned",
-    }),
+    (request) => {
+      const propertyRow = (propertiesResponse.data ?? []).find(
+        (property) => text(property.id) === text(request.property_id),
+      );
+
+      return {
+        id: text(request.id),
+        property: propertyById.get(text(request.property_id)) ?? "Unassigned Property",
+        location: text(propertyRow?.address, "Live request"),
+        title: text(request.title, "Maintenance request"),
+        description: text(request.description, "No description"),
+        priority:
+          text(request.priority) === "critical"
+            ? "Critical"
+            : text(request.priority) === "high"
+              ? "High Priority"
+              : text(request.priority) === "low"
+                ? "Low"
+                : "Routine",
+        status:
+          text(request.status) === "completed"
+            ? "completed"
+            : text(request.status) === "awaiting_parts"
+              ? "awaiting_parts"
+              : text(request.status) === "in_progress"
+                ? "in_progress"
+                : text(request.status) === "cancelled"
+                  ? "cancelled"
+                  : "urgent",
+        reportedAgo: relativeTime(request.created_at),
+        estimate: text(request.estimate_text, "TBD"),
+        assignee: text(request.assignee_text, "Unassigned"),
+      };
+    },
   );
 
   const ownerStatements: OwnerStatement[] = (statementsResponse.data ?? []).map(
@@ -402,6 +565,8 @@ export async function getOperationsSnapshot(): Promise<OperationsSnapshot> {
             : "credential_required",
     description: "Credential-gated live integration.",
     lastSync: "Live workspace",
+    lastSyncAt: text(integration.updated_at),
+    metadata: integration.metadata,
   }));
 
   const attachmentEntries = await Promise.all(
@@ -450,6 +615,12 @@ export async function getOperationsSnapshot(): Promise<OperationsSnapshot> {
       attachment: attachmentByIssueId.get(text(report.id)),
     };
   });
+  const profile = profileResponse.data;
+  const avatarUrl = await signedStorageUrl("avatars", profile?.avatar_url);
+  const userName = text(
+    profile?.full_name,
+    text(user.user_metadata?.full_name, user.email ?? "PropFlow User"),
+  );
 
   return {
     session: {
@@ -457,10 +628,11 @@ export async function getOperationsSnapshot(): Promise<OperationsSnapshot> {
       role,
       user: {
         id: user.id,
-        name: text(user.user_metadata?.full_name, user.email ?? "PropFlow User"),
-        email: user.email ?? "user@example.com",
+        name: userName,
+        email: text(profile?.email, user.email ?? "user@example.com"),
         role,
         status: "active",
+        avatar: avatarUrl || undefined,
       },
       workspace,
     },
@@ -605,6 +777,8 @@ export async function createBookingRecord(input: {
   property: string;
   platform?: Booking["platform"];
   amount?: number;
+  checkIn?: string;
+  checkOut?: string;
 }): Promise<RepositoryResult> {
   if (!hasSupabaseEnv()) return createDemoBooking(input);
   const supabase = await getServerSupabase();
@@ -654,6 +828,8 @@ export async function createBookingRecord(input: {
       guest_id: guestId,
       guest_name: input.guestName,
       platform: input.platform?.toLowerCase() ?? "direct",
+      check_in: dateInput(input.checkIn),
+      check_out: dateInput(input.checkOut),
       status: "confirmed",
       payment_status: "unpaid",
       amount_cents: Math.round((input.amount ?? 0) * 100),
@@ -671,6 +847,7 @@ export async function createBookingRecord(input: {
         property_id: property?.id,
         booking_id: data?.id,
         title: `Turnover for ${input.property}`,
+        scheduled_for: input.checkOut ? `${dateInput(input.checkOut) ?? input.checkOut}T11:00:00` : undefined,
         status: "pending",
       })
       .select("id")
@@ -862,6 +1039,73 @@ export async function inviteMemberRecord(input: {
   return { ok: true, id: data?.id, message: "Invite created." };
 }
 
+export async function updateTeamMemberRoleRecord(
+  id: string,
+  role: Role,
+): Promise<RepositoryResult> {
+  if (!hasSupabaseEnv()) return updateDemoTeamMemberRole(id, role);
+  const supabase = await getServerSupabase();
+  if (!supabase) return updateDemoTeamMemberRole(id, role);
+  const workspaceId = await getWorkspaceIdForMutation();
+  if (!workspaceId) return { ok: false, message: "No workspace found." };
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (user?.id === id) return { ok: false, message: "You cannot change your own role." };
+
+  const { data, error } = await supabase
+    .from("memberships")
+    .update({ role })
+    .eq("workspace_id", workspaceId)
+    .or(`id.eq.${id},user_id.eq.${id}`)
+    .select("id,email")
+    .maybeSingle();
+
+  if (error) return { ok: false, message: error.message };
+  if (!data) return { ok: false, message: "Team member not found." };
+
+  await supabase.from("notifications").insert({
+    workspace_id: workspaceId,
+    channel: "in_app",
+    title: "Team role updated",
+    body: `${text(data.email, "A team member")} is now ${role.replace("_", " ")}.`,
+  });
+  return { ok: true, id: text(data.id, id), message: "Role updated." };
+}
+
+export async function removeTeamMemberRecord(id: string): Promise<RepositoryResult> {
+  if (!hasSupabaseEnv()) return removeDemoTeamMember(id);
+  const supabase = await getServerSupabase();
+  if (!supabase) return removeDemoTeamMember(id);
+  const workspaceId = await getWorkspaceIdForMutation();
+  if (!workspaceId) return { ok: false, message: "No workspace found." };
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (user?.id === id) return { ok: false, message: "You cannot remove yourself." };
+
+  const { data, error } = await supabase
+    .from("memberships")
+    .delete()
+    .eq("workspace_id", workspaceId)
+    .or(`id.eq.${id},user_id.eq.${id}`)
+    .select("id,email")
+    .maybeSingle();
+
+  if (error) return { ok: false, message: error.message };
+  if (!data) return { ok: false, message: "Team member not found." };
+
+  await supabase.from("notifications").insert({
+    workspace_id: workspaceId,
+    channel: "in_app",
+    title: "Team member removed",
+    body: `${text(data.email, "A team member")} was removed from the workspace.`,
+  });
+  return { ok: true, id: text(data.id, id), message: "Team member removed." };
+}
+
 export async function createGuestMaintenanceRequestRecord(input: {
   title: string;
   description: string;
@@ -935,9 +1179,38 @@ export async function updatePropertyRecord(
   if (!supabase) return updateDemoProperty(id, updates);
   const workspaceId = await getWorkspaceIdForMutation();
   if (!workspaceId) return { ok: false, message: "No workspace found." };
+
+  let ownerId: string | null | undefined;
+  const ownerName = updates.owner?.trim();
+  if (ownerName) {
+    const { data: existingOwner } = await supabase
+      .from("owners")
+      .select("id")
+      .eq("workspace_id", workspaceId)
+      .eq("name", ownerName)
+      .maybeSingle();
+
+    if (existingOwner?.id) {
+      ownerId = existingOwner.id;
+    } else {
+      const { data: createdOwner } = await supabase
+        .from("owners")
+        .insert({ workspace_id: workspaceId, name: ownerName })
+        .select("id")
+        .single();
+      ownerId = createdOwner?.id ?? null;
+    }
+  }
+
   const { error } = await supabase
     .from("properties")
-    .update({ name: updates.name, address: updates.address, status: updates.status?.toLowerCase(), rental_model: updates.model })
+    .update({
+      name: updates.name,
+      address: updates.address,
+      owner_id: ownerId,
+      status: updates.status?.toLowerCase(),
+      rental_model: updates.model,
+    })
     .eq("id", id)
     .eq("workspace_id", workspaceId);
   if (error) return { ok: false, message: error.message };
@@ -961,19 +1234,70 @@ export async function deletePropertyRecord(id: string): Promise<RepositoryResult
 
 export async function updateBookingRecord(
   id: string,
-  updates: Partial<Pick<Booking, "guest" | "email" | "property" | "platform" | "amount" | "status" | "payment">>,
+  updates: Partial<Pick<Booking, "guest" | "email" | "property" | "platform" | "amount" | "status" | "payment">> & {
+    checkIn?: string;
+    checkOut?: string;
+  },
 ): Promise<RepositoryResult> {
   if (!hasSupabaseEnv()) return updateDemoBooking(id, updates);
   const supabase = await getServerSupabase();
   if (!supabase) return updateDemoBooking(id, updates);
   const workspaceId = await getWorkspaceIdForMutation();
   if (!workspaceId) return { ok: false, message: "No workspace found." };
+
+  const { data: currentBooking } = await supabase
+    .from("bookings")
+    .select("guest_id")
+    .eq("id", id)
+    .eq("workspace_id", workspaceId)
+    .maybeSingle();
+
+  let propertyId: string | undefined;
+  if (updates.property) {
+    const { data: property } = await supabase
+      .from("properties")
+      .select("id")
+      .eq("workspace_id", workspaceId)
+      .eq("name", updates.property)
+      .maybeSingle();
+    propertyId = property?.id;
+  }
+
+  const patch: Record<string, unknown> = {};
+  if (updates.guest) patch.guest_name = updates.guest;
+  if (updates.platform) patch.platform = updates.platform.toLowerCase();
+  if (typeof updates.amount === "number" && Number.isFinite(updates.amount)) {
+    patch.amount_cents = Math.round(updates.amount * 100);
+  }
+  if (updates.status) patch.status = updates.status.toLowerCase().replace("-", "_");
+  if (updates.payment) patch.payment_status = updates.payment.toLowerCase();
+  if (updates.checkIn !== undefined) patch.check_in = dateInput(updates.checkIn) ?? null;
+  if (updates.checkOut !== undefined) patch.check_out = dateInput(updates.checkOut) ?? null;
+  if (propertyId) patch.property_id = propertyId;
+
   const { error } = await supabase
     .from("bookings")
-    .update({ status: updates.status?.toLowerCase().replace("-", "_"), payment_status: updates.payment?.toLowerCase() })
+    .update(patch)
     .eq("id", id)
     .eq("workspace_id", workspaceId);
   if (error) return { ok: false, message: error.message };
+
+  if (currentBooking?.guest_id && (updates.guest || updates.email)) {
+    await supabase
+      .from("guests")
+      .update({ name: updates.guest, email: updates.email })
+      .eq("id", currentBooking.guest_id)
+      .eq("workspace_id", workspaceId);
+  }
+
+  if (typeof updates.amount === "number" && Number.isFinite(updates.amount)) {
+    await supabase
+      .from("financial_transactions")
+      .update({ amount_cents: Math.round(updates.amount * 100) })
+      .eq("booking_id", id)
+      .eq("workspace_id", workspaceId);
+  }
+
   return { ok: true, id, message: "Booking updated." };
 }
 
@@ -1185,6 +1509,7 @@ export async function createCleaningTaskRecord(input: {
       workspace_id: workspaceId,
       property_id: property?.id,
       title: input.type || "Turnover - Standard Reset",
+      scheduled_for: dateTimeInput(input.checkIn),
       status: "pending",
     })
     .select("id")
@@ -1239,6 +1564,8 @@ export async function createMaintenanceRequestRecord(input: {
       title: input.title,
       description: input.description,
       priority,
+      assignee_text: input.assignee || null,
+      estimate_text: input.estimate || null,
       status: "pending",
     })
     .select("id")
@@ -1301,7 +1628,14 @@ export async function updateMaintenanceRequestRecord(
             : undefined;
   const { error } = await supabase
     .from("maintenance_requests")
-    .update({ title: updates.title, description: updates.description, priority, status: updates.status })
+    .update({
+      title: updates.title,
+      description: updates.description,
+      priority,
+      status: updates.status,
+      assignee_text: updates.assignee,
+      estimate_text: updates.estimate,
+    })
     .eq("id", id)
     .eq("workspace_id", workspaceId);
   if (error) return { ok: false, message: error.message };
@@ -1364,4 +1698,163 @@ export async function saveNotificationPreferencesRecord(
 
   if (error) return { ok: false, message: error.message };
   return { ok: true, message: "Notification preferences saved." };
+}
+
+export async function connectIntegrationRecord(provider: string): Promise<{ ok: boolean; redirectUrl?: string; message: string }> {
+  if (!hasSupabaseEnv()) return connectDemoIntegration(provider);
+
+  const oauthEnvs: Record<string, { clientIdEnv: string; authUrl: string; scopes: string }> = {
+    google_calendar: {
+      clientIdEnv: "GOOGLE_CALENDAR_CLIENT_ID",
+      authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+      scopes: "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events",
+    },
+    airbnb: {
+      clientIdEnv: "AIRBNB_CLIENT_ID",
+      authUrl: "https://www.airbnb.com/oauth2/auth",
+      scopes: "messages_read bookings_read",
+    },
+    vrbo: {
+      clientIdEnv: "VRBO_CLIENT_ID",
+      authUrl: "https://oauth2.vrbo.com/oauth2/authorize",
+      scopes: "reservations:read properties:read",
+    },
+    quickbooks: {
+      clientIdEnv: "QUICKBOOKS_CLIENT_ID",
+      authUrl: "https://appcenter.intuit.com/connect/oauth2",
+      scopes: "com.intuit.quickbooks.accounting",
+    },
+  };
+
+  const config = oauthEnvs[provider];
+  if (!config) return { ok: false, message: "Unsupported provider." };
+
+  const clientId = process.env[config.clientIdEnv];
+  if (!clientId) return { ok: false, message: "Credentials not configured." };
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const redirectUri = `${appUrl}/api/integrations/${provider}/callback`;
+
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    scope: config.scopes,
+    access_type: "offline",
+    prompt: "consent",
+  });
+
+  return {
+    ok: true,
+    redirectUrl: `${config.authUrl}?${params.toString()}`,
+    message: "Redirecting to OAuth provider.",
+  };
+}
+
+export async function disconnectIntegrationRecord(provider: string): Promise<RepositoryResult> {
+  if (!hasSupabaseEnv()) return disconnectDemoIntegration(provider);
+
+  const supabase = await getServerSupabase();
+  if (!supabase) return disconnectDemoIntegration(provider);
+
+  const workspaceId = await getWorkspaceIdForMutation();
+  if (!workspaceId) return { ok: false, message: "No workspace found." };
+
+  // Remove integration credentials
+  const adminSupabase = getServiceSupabase();
+  if (adminSupabase) {
+    await adminSupabase
+      .from("integration_credentials")
+      .delete()
+      .eq("workspace_id", workspaceId)
+      .eq("provider", provider);
+  }
+
+  await supabase
+    .from("integrations")
+    .update({ status: "credential_required" })
+    .eq("workspace_id", workspaceId)
+    .eq("provider", provider);
+
+  return { ok: true, message: `${provider} disconnected.` };
+}
+
+export async function getOwnerStatementsRecord(): Promise<import("@/lib/types").OwnerStatement[]> {
+  if (!hasSupabaseEnv()) {
+    const { ownerStatements } = getDemoSnapshot();
+    return ownerStatements;
+  }
+
+  const supabase = await getServerSupabase();
+  if (!supabase) {
+    const { ownerStatements } = getDemoSnapshot();
+    return ownerStatements;
+  }
+
+  const workspaceId = await getWorkspaceIdForMutation();
+  if (!workspaceId) {
+    const { ownerStatements } = getDemoSnapshot();
+    return ownerStatements;
+  }
+
+  const [statementsResponse, ownersResponse] = await Promise.all([
+    supabase.from("owner_statements").select("*").eq("workspace_id", workspaceId),
+    supabase.from("owners").select("id, name").eq("workspace_id", workspaceId),
+  ]);
+
+  const ownerById = new Map(
+    (ownersResponse.data ?? []).map((owner) => [text(owner.id), text(owner.name)]),
+  );
+
+  return (statementsResponse.data ?? []).map((statement) => ({
+    id: text(statement.id),
+    owner: ownerById.get(text(statement.owner_id)) ?? "Owner",
+    properties: 0,
+    revenue: Math.round(numberValue(statement.revenue_cents) / 100),
+    expenses: Math.round(numberValue(statement.expenses_cents) / 100),
+    payout: Math.round(numberValue(statement.payout_cents) / 100),
+    status: text(statement.status) === "sent" ? "sent" : text(statement.status) === "ready" ? "ready" : "draft",
+  }));
+}
+
+export async function getAdminDashboardRecord(): Promise<{
+  workspaces: Array<{ id: string; name: string; plan: string; status: string; members: number }>;
+}> {
+  const adminSupabase = getServiceSupabase();
+
+  if (!adminSupabase) {
+    // Demo fallback
+    return {
+      workspaces: [
+        { id: "ws_demo", name: "Apex Property Group", plan: "Professional", status: "trial", members: 4 },
+      ],
+    };
+  }
+
+  const { data: workspacesData } = await adminSupabase
+    .from("workspaces")
+    .select("id, name, plan_slug, status")
+    .order("created_at", { ascending: false })
+    .limit(50);
+
+  const { data: membershipsData } = await adminSupabase
+    .from("memberships")
+    .select("workspace_id")
+    .eq("status", "active");
+
+  const memberCountByWorkspace = new Map<string, number>();
+  for (const row of membershipsData ?? []) {
+    const wid = String(row.workspace_id);
+    memberCountByWorkspace.set(wid, (memberCountByWorkspace.get(wid) ?? 0) + 1);
+  }
+
+  const workspaces = (workspacesData ?? []).map((ws) => ({
+    id: text(ws.id),
+    name: text(ws.name, "Unnamed Workspace"),
+    plan: text(ws.plan_slug, "professional"),
+    status: text(ws.status, "active"),
+    members: memberCountByWorkspace.get(text(ws.id)) ?? 0,
+  }));
+
+  return { workspaces };
 }

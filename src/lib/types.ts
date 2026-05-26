@@ -196,10 +196,12 @@ export interface OwnerStatement {
 export interface Integration {
   id: string;
   name: string;
-  provider: "airbnb" | "vrbo" | "google_calendar" | "quickbooks" | "paypal";
+  provider: "airbnb" | "vrbo" | "google_calendar" | "quickbooks" | "paypal" | "twilio";
   status: IntegrationStatus;
   description: string;
   lastSync: string;
+  lastSyncAt?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface OperationsSnapshot {

@@ -2,6 +2,7 @@ import { BellOff, CheckCircle2 } from "lucide-react";
 import { PageHeader } from "@/components/app/page-header";
 import { SectionCard } from "@/components/app/section-card";
 import { StatusPill } from "@/components/app/status-pill";
+import { EmptyState } from "@/components/app/empty-state";
 import {
   markAllNotificationsRead as markAllNotificationsReadAction,
   markNotificationRead as markNotificationReadAction,
@@ -78,14 +79,12 @@ export default async function NotificationsPage({
       </form>
       <SectionCard title="Notification Center">
         {visible.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-outline-variant p-10 text-center">
-            <BellOff className="mx-auto mb-3 text-outline" size={30} />
-            <h2 className="font-heading text-xl font-semibold text-primary">
-              You are all caught up
-            </h2>
-            <p className="mt-2 text-sm text-on-surface-variant">
-              No notifications match the current filters.
-            </p>
+          <div className="py-8">
+            <EmptyState
+              title="You are all caught up"
+              description="No notifications match the current filters or you have no activity yet."
+              icon={BellOff}
+            />
           </div>
         ) : (
           <div className="space-y-3">

@@ -3,6 +3,7 @@ import { AvatarUpload } from "@/components/app/avatar-upload";
 import { SectionCard } from "@/components/app/section-card";
 import { getOperationsSnapshot } from "@/lib/data/repository";
 import { saveNotificationPreferences, updateProfile } from "@/app/actions";
+import { hasSupabaseEnv } from "@/lib/supabase/env";
 
 async function savePreferences(formData: FormData) {
   "use server";
@@ -18,6 +19,7 @@ export default async function AccountSettingsPage() {
   const { session } = await getOperationsSnapshot();
   const currentUser = session.user;
   const avatar = currentUser.avatar ?? "/icon.svg";
+  const storageEnabled = hasSupabaseEnv();
   const nameParts = currentUser.name.split(" ");
   const firstName = nameParts[0] ?? "";
   const lastName = nameParts.slice(1).join(" ");
@@ -31,13 +33,20 @@ export default async function AccountSettingsPage() {
       <div className="grid gap-8 lg:grid-cols-3">
         <div className="space-y-6">
           <section className="rounded-xl border border-outline-variant/30 bg-surface-container-lowest p-6 text-center ambient-shadow">
-            <AvatarUpload name={currentUser.name} src={avatar} />
+            <AvatarUpload
+              hasStorage={storageEnabled}
+              name={currentUser.name}
+              src={avatar}
+              userId={currentUser.id}
+            />
             <h2 className="font-heading text-xl font-semibold text-primary">
               {currentUser.name}
             </h2>
-            <p className="text-sm text-on-surface-variant">Regional Manager</p>
+            <p className="text-sm text-on-surface-variant capitalize">
+              {session.role.replace(/_/g, " ")}
+            </p>
             <span className="mt-3 inline-block rounded-full bg-secondary-container/30 px-3 py-1 text-xs font-semibold text-on-secondary-container">
-              Active Admin
+              {session.role === "platform_admin" ? "Platform Administrator" : "Workspace Member"}
             </span>
           </section>
         </div>

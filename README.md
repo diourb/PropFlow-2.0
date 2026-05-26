@@ -62,6 +62,7 @@ PayPal subscriptions:
 PAYPAL_ENV=sandbox
 PAYPAL_CLIENT_ID=
 PAYPAL_CLIENT_SECRET=
+PAYPAL_WEBHOOK_ID=
 PAYPAL_PLAN_ID_STARTER=
 PAYPAL_PLAN_ID_PROFESSIONAL=
 PAYPAL_PLAN_ID_ENTERPRISE=
@@ -108,7 +109,7 @@ The app is designed to avoid crashing when Supabase env vars are absent, but pro
 
 ## Billing And Provider Status
 
-PropFlow currently includes PayPal subscription plumbing. Stripe is not integrated in this codebase; Stripe CTAs should remain provider-not-configured until a dedicated Stripe implementation is added.
+PropFlow currently includes PayPal subscription plumbing. Live checkout requires Supabase, PayPal REST app credentials, a PayPal webhook ID, and configured PayPal plan IDs. Stripe is not integrated in this codebase; Stripe CTAs should remain provider-not-configured until a dedicated Stripe implementation is added.
 
 Email, SMS, WhatsApp, push, calendar, channel, and accounting integrations must only claim real sends/syncs when their provider credentials and backend handlers are configured. Missing providers should show configured/not-configured states instead of pretending work was completed.
 

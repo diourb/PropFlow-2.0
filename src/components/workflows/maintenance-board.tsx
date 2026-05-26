@@ -2,10 +2,11 @@
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ChevronDown, ChevronUp, Filter, MapPin, Pencil, Plus, Trash2, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronUp, Filter, MapPin, Paperclip, Pencil, Plus, Trash2, X } from "lucide-react";
 import { createMaintenanceRequest, deleteMaintenanceRequest, updateMaintenanceRequest, updateWorkOrderStatus } from "@/app/actions";
 import { ConfirmDialog } from "@/components/app/confirm-dialog";
 import { StatusPill } from "@/components/app/status-pill";
+import { EmptyState } from "@/components/app/empty-state";
 import type { IssueReport, MaintenanceRequest, Property } from "@/lib/types";
 
 type FilterState = "all" | MaintenanceRequest["status"];
@@ -28,8 +29,10 @@ function EditWorkOrderModal({
   onSaved: () => void;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
+  const attachInputRef = useRef<HTMLInputElement>(null);
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState("");
+  const [attachFile, setAttachFile] = useState<File | null>(null);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-on-background/40 p-4 backdrop-blur-sm">
@@ -41,6 +44,16 @@ function EditWorkOrderModal({
           if (!form) return;
           startTransition(async () => {
             const result = await updateMaintenanceRequest(new FormData(form));
+            if (result.ok && attachFile) {
+              const fd = new FormData();
+              fd.set("file", attachFile);
+              fd.set("requestId", request.id);
+              try {
+                await fetch("/api/storage/maintenance", { method: "POST", body: fd });
+              } catch {
+                // attachment upload failure does not block the save
+              }
+            }
             setMessage(result.message);
             if (result.ok) onSaved();
           });
@@ -85,6 +98,29 @@ function EditWorkOrderModal({
             <span className="mb-1 block text-xs font-semibold text-on-surface-variant">Estimate</span>
             <input className="h-11 w-full rounded-lg border border-outline-variant px-4 text-sm outline-none focus:border-secondary" defaultValue={request.estimate} name="estimate" placeholder="$0" />
           </label>
+          <div>
+            <span className="mb-1 block text-xs font-semibold text-on-surface-variant">
+              Photo / Receipt <span className="font-normal text-on-surface-variant">(optional)</span>
+            </span>
+            <button
+              className="flex h-10 items-center gap-2 rounded-lg border border-dashed border-outline-variant bg-surface-container-low px-4 text-xs font-semibold hover:bg-surface-container-high"
+              onClick={() => attachInputRef.current?.click()}
+              type="button"
+            >
+              <Paperclip size={14} />
+              {attachFile ? attachFile.name : "Attach file"}
+            </button>
+            <input
+              accept="image/*,application/pdf"
+              className="sr-only"
+              ref={attachInputRef}
+              type="file"
+              onChange={(e) => {
+                setAttachFile(e.currentTarget.files?.[0] ?? null);
+                e.currentTarget.value = "";
+              }}
+            />
+          </div>
         </div>
         {message ? <p className="mt-4 rounded-lg bg-secondary-container px-3 py-2 text-sm font-semibold text-on-secondary-container">{message}</p> : null}
         <div className="mt-6 flex gap-3">
@@ -200,10 +236,21 @@ export function MaintenanceBoard({
       ) : null}
 
       {filteredItems.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-outline-variant p-10 text-center">
-          <p className="text-sm text-on-surface-variant">
-            No requests match: <span className="font-semibold capitalize">{filterLabel}</span>
-          </p>
+        <div className="mt-8">
+          <EmptyState
+            title="No requests match"
+            description={`We couldn't find any maintenance requests with the status: ${filterLabel}. Try changing your filter or add a new order.`}
+            icon={Filter}
+            action={
+              <button
+                className="h-11 rounded-lg border border-outline-variant px-6 text-sm font-semibold"
+                onClick={() => setFilterStatus("all")}
+                type="button"
+              >
+                Clear Filter
+              </button>
+            }
+          />
         </div>
       ) : (
         <>
@@ -423,8 +470,10 @@ function CreateWorkOrderModal({
   onSaved: () => void;
   properties: Property[];
 }) {
+  const attachInputRef = useRef<HTMLInputElement>(null);
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState("");
+  const [attachFile, setAttachFile] = useState<File | null>(null);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-on-background/40 p-4 backdrop-blur-sm">
@@ -435,6 +484,16 @@ function CreateWorkOrderModal({
           const form = event.currentTarget;
           startTransition(async () => {
             const result = await createMaintenanceRequest(new FormData(form));
+            if (result.ok && result.id && attachFile) {
+              const fd = new FormData();
+              fd.set("file", attachFile);
+              fd.set("requestId", result.id);
+              try {
+                await fetch("/api/storage/maintenance", { method: "POST", body: fd });
+              } catch {
+                // attachment upload failure does not block creation
+              }
+            }
             setMessage(result.message);
             if (result.ok) onSaved();
           });
@@ -468,6 +527,29 @@ function CreateWorkOrderModal({
             <input className="h-11 rounded-lg border border-outline-variant px-4 text-sm" name="assignee" placeholder="Assignee" />
           </div>
           <input className="h-11 rounded-lg border border-outline-variant px-4 text-sm" name="estimate" placeholder="Estimated cost or TBD" />
+          <div>
+            <span className="mb-1 block text-xs font-semibold text-on-surface-variant">
+              Photo / Receipt <span className="font-normal">(optional)</span>
+            </span>
+            <button
+              className="flex h-10 items-center gap-2 rounded-lg border border-dashed border-outline-variant bg-surface-container-low px-4 text-xs font-semibold hover:bg-surface-container-high"
+              onClick={() => attachInputRef.current?.click()}
+              type="button"
+            >
+              <Paperclip size={14} />
+              {attachFile ? attachFile.name : "Attach photo or receipt"}
+            </button>
+            <input
+              accept="image/*,application/pdf"
+              className="sr-only"
+              ref={attachInputRef}
+              type="file"
+              onChange={(e) => {
+                setAttachFile(e.currentTarget.files?.[0] ?? null);
+                e.currentTarget.value = "";
+              }}
+            />
+          </div>
         </div>
         {message ? <p className="mt-4 rounded-lg bg-secondary-container px-3 py-2 text-sm font-semibold text-on-secondary-container">{message}</p> : null}
         <div className="mt-6 flex gap-3">

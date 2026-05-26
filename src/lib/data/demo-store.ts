@@ -24,6 +24,7 @@ import type {
   Property,
   RepositoryResult,
   Role,
+  TeamMember,
 } from "@/lib/types";
 
 const initialChecklist: ChecklistItem[] = [
@@ -106,6 +107,7 @@ type DemoState = {
   maintenanceRequests: MaintenanceRequest[];
   issueReports: IssueReport[];
   notifications: NotificationItem[];
+  teamMembers: TeamMember[];
 };
 
 const globalStore = globalThis as typeof globalThis & {
@@ -116,6 +118,7 @@ function createInitialState(): DemoState {
   const ownerNames = [...new Set(seededProperties.map((property) => property.owner))];
   return {
     role: "workspace_admin",
+    teamMembers: [...teamMembers],
     properties: [...seededProperties],
     bookings: [...seededBookings],
     guests: [...seededGuests],
@@ -148,11 +151,44 @@ function createInitialState(): DemoState {
 
 function getState() {
   globalStore.__propflowDemoState ??= createInitialState();
+  globalStore.__propflowDemoState.teamMembers ??= [...teamMembers];
   return globalStore.__propflowDemoState;
 }
 
 function makeId(prefix: string) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function demoDate(value?: string) {
+  if (!value) return null;
+  const parsed = new Date(`${value}T12:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function demoDateLabel(value?: string) {
+  const parsed = demoDate(value);
+  if (!parsed) return "";
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(parsed);
+}
+
+function demoStayDates(checkIn?: string, checkOut?: string) {
+  const start = demoDateLabel(checkIn);
+  const end = demoDateLabel(checkOut);
+  if (start && end) return `${start} - ${end}`;
+  if (start) return start;
+  if (end) return end;
+  return "Next turnover";
+}
+
+function demoNights(checkIn?: string, checkOut?: string, fallback = 3) {
+  const start = demoDate(checkIn);
+  const end = demoDate(checkOut);
+  if (!start || !end) return fallback;
+  return Math.max(0, Math.round((end.getTime() - start.getTime()) / 86_400_000));
 }
 
 export function setDemoRole(role: Role): RepositoryResult {
@@ -163,12 +199,14 @@ export function setDemoRole(role: Role): RepositoryResult {
 export function getDemoSnapshot(role?: Role): OperationsSnapshot {
   const state = getState();
   const activeRole = role ?? state.role;
-  const completed = state.checklistItems.filter((item) => item.completed).length;
-  const cleaningTasks = state.cleaningTasks.map((task) =>
-    task.id === "clean_001"
-      ? { ...task, completed, total: state.checklistItems.length }
-      : task,
-  );
+  const cleaningTasks = state.cleaningTasks.map((task) => {
+    const taskItems = state.checklistItems.filter((item) => item.cleaningTaskId === task.id);
+    return {
+      ...task,
+      completed: taskItems.filter((item) => item.completed).length,
+      total: taskItems.length || task.total,
+    };
+  });
   const activeWorkspace = state.workspaceName
     ? { ...workspace, name: state.workspaceName }
     : workspace;
@@ -180,7 +218,7 @@ export function getDemoSnapshot(role?: Role): OperationsSnapshot {
       user: { ...currentUser, role: activeRole },
       workspace: activeWorkspace,
     },
-    teamMembers,
+    teamMembers: state.teamMembers,
     owners: state.owners,
     properties: state.properties,
     bookings: state.bookings,
@@ -245,6 +283,8 @@ export function createDemoBooking(input: {
   property: string;
   platform?: Booking["platform"];
   amount?: number;
+  checkIn?: string;
+  checkOut?: string;
 }): RepositoryResult {
   const state = getState();
   const booking: Booking = {
@@ -252,8 +292,8 @@ export function createDemoBooking(input: {
     guest: input.guestName,
     email: input.email || "guest@example.com",
     property: input.property,
-    stayDates: "Next turnover",
-    nights: input.platform === "Lease" ? 365 : 3,
+    stayDates: demoStayDates(input.checkIn, input.checkOut),
+    nights: input.platform === "Lease" ? 365 : demoNights(input.checkIn, input.checkOut),
     platform: input.platform ?? "Direct",
     payment: "Unpaid",
     status: "Confirmed",
@@ -276,6 +316,14 @@ export function createDemoBooking(input: {
         "https://images.unsplash.com/photo-1600210492486-724fe5c67fb0?auto=format&fit=crop&w=1200&q=80",
     };
     state.cleaningTasks.unshift(task);
+    state.checklistItems.push(
+      ...initialChecklist.map((item, index) => ({
+        ...item,
+        id: `${task.id}_${index + 1}`,
+        cleaningTaskId: task.id,
+        completed: false,
+      })),
+    );
   }
 
   state.notifications.unshift({
@@ -295,6 +343,16 @@ export function inviteDemoMember(input: {
   role: Role;
 }): RepositoryResult {
   const state = getState();
+  const exists = state.teamMembers.some((member) => member.email === input.email);
+  if (!exists) {
+    state.teamMembers.push({
+      id: makeId("member"),
+      name: input.email.split("@")[0]?.replace(/[._-]+/g, " ") || "Invited Member",
+      email: input.email,
+      role: input.role,
+      status: "pending",
+    });
+  }
   state.notifications.unshift({
     id: makeId("notif"),
     title: "Invite created",
@@ -305,6 +363,44 @@ export function inviteDemoMember(input: {
   });
 
   return { ok: true, id: input.email, message: "Demo invite created." };
+}
+
+export function updateDemoTeamMemberRole(id: string, role: Role): RepositoryResult {
+  const state = getState();
+  const member = state.teamMembers.find((item) => item.id === id);
+  if (!member) return { ok: false, message: "Team member not found." };
+  if (member.id === currentUser.id) return { ok: false, message: "You cannot change your own role in demo mode." };
+
+  state.teamMembers = state.teamMembers.map((item) =>
+    item.id === id ? { ...item, role } : item,
+  );
+  state.notifications.unshift({
+    id: makeId("notif"),
+    title: "Team role updated",
+    body: `${member.name} is now ${role.replace("_", " ")}.`,
+    channel: "in_app",
+    read: false,
+    createdAt: new Date().toISOString(),
+  });
+  return { ok: true, id, message: "Role updated." };
+}
+
+export function removeDemoTeamMember(id: string): RepositoryResult {
+  const state = getState();
+  const member = state.teamMembers.find((item) => item.id === id);
+  if (!member) return { ok: false, message: "Team member not found." };
+  if (member.id === currentUser.id) return { ok: false, message: "You cannot remove yourself in demo mode." };
+
+  state.teamMembers = state.teamMembers.filter((item) => item.id !== id);
+  state.notifications.unshift({
+    id: makeId("notif"),
+    title: "Team member removed",
+    body: `${member.name} was removed from the workspace.`,
+    channel: "in_app",
+    read: false,
+    createdAt: new Date().toISOString(),
+  });
+  return { ok: true, id, message: "Team member removed." };
 }
 
 export function createDemoGuestMaintenanceRequest(input: {
@@ -471,13 +567,24 @@ export function deleteDemoProperty(id: string): RepositoryResult {
 
 export function updateDemoBooking(
   id: string,
-  updates: Partial<Pick<Booking, "guest" | "email" | "property" | "platform" | "amount" | "status" | "payment">>,
+  updates: Partial<Pick<Booking, "guest" | "email" | "property" | "platform" | "amount" | "status" | "payment">> & {
+    checkIn?: string;
+    checkOut?: string;
+  },
 ): RepositoryResult {
   const state = getState();
   const exists = state.bookings.find((b) => b.id === id);
   if (!exists) return { ok: false, message: "Booking not found." };
+  const { checkIn, checkOut, ...bookingUpdates } = updates;
+  const dateUpdates =
+    checkIn !== undefined || checkOut !== undefined
+      ? {
+          stayDates: demoStayDates(checkIn, checkOut),
+          nights: demoNights(checkIn, checkOut, exists.nights),
+        }
+      : {};
   state.bookings = state.bookings.map((b) =>
-    b.id === id ? { ...b, ...updates } : b,
+    b.id === id ? { ...b, ...bookingUpdates, ...dateUpdates } : b,
   );
   return { ok: true, id, message: "Booking updated." };
 }
@@ -692,6 +799,20 @@ export function updateDemoMaintenanceRequest(
     r.id === id ? { ...r, ...updates } : r,
   );
   return { ok: true, id, message: "Work order updated." };
+}
+
+export function connectDemoIntegration(provider: string): RepositoryResult {
+  return {
+    ok: false,
+    message: `${provider.replace("_", " ")} requires Supabase configuration.`,
+  };
+}
+
+export function disconnectDemoIntegration(provider: string): RepositoryResult {
+  return {
+    ok: false,
+    message: `${provider.replace("_", " ")} requires Supabase configuration.`,
+  };
 }
 
 export function markDemoNotificationRead(id: string): RepositoryResult {

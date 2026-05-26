@@ -9,9 +9,9 @@ export function roleHomePath(role: Role, status?: string) {
     case "owner":
       return "/owner-dashboard";
     case "cleaner":
-      return "/cleaner-dashboard";
+      return "/field/cleaning";
     case "maintenance_tech":
-      return "/maintenance-dashboard";
+      return "/field/maintenance";
     case "guest":
       return "/guest";
     case "workspace_admin":

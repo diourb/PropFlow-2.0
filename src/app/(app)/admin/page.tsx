@@ -1,13 +1,32 @@
+import { redirect } from "next/navigation";
 import { AlertTriangle, Database, Server, ShieldCheck } from "lucide-react";
 import { PageHeader } from "@/components/app/page-header";
 import { SectionCard } from "@/components/app/section-card";
 import { StatCard } from "@/components/app/stat-card";
 import { StatusPill } from "@/components/app/status-pill";
+import { getOperationsSnapshot, getAdminDashboardRecord } from "@/lib/data/repository";
 import { platformMetrics } from "@/lib/demo-data";
 
 const icons = [Database, ShieldCheck, Server, AlertTriangle];
 
-export default function AdminPage() {
+export default async function AdminPage() {
+  const { session } = await getOperationsSnapshot();
+
+  if (session.role !== "platform_admin") {
+    redirect("/dashboard");
+  }
+
+  const { workspaces } = await getAdminDashboardRecord();
+  const totalWorkspaces = workspaces.length;
+  const activeWorkspaces = workspaces.filter((ws) => ws.status === "active").length;
+  const totalMembers = workspaces.reduce((sum, ws) => sum + ws.members, 0);
+
+  const metricsOverride = [
+    { label: "Total Workspaces", value: String(totalWorkspaces), delta: `${activeWorkspaces} active` },
+    { label: "Total Members", value: String(totalMembers), delta: "Across all workspaces" },
+    ...platformMetrics.slice(2),
+  ];
+
   return (
     <>
       <PageHeader
@@ -16,7 +35,7 @@ export default function AdminPage() {
         description="System status, subscription health, workspace growth, and pending administrative actions."
       />
       <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
-        {platformMetrics.map((metric, index) => (
+        {metricsOverride.map((metric, index) => (
           <StatCard
             delta={metric.delta}
             icon={icons[index]}
@@ -27,49 +46,60 @@ export default function AdminPage() {
           />
         ))}
       </div>
+
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
-        <SectionCard className="lg:col-span-2" title="System Integrity">
-          <div className="mb-6">
-            <StatusPill tone="success">All Systems Operational</StatusPill>
-          </div>
-          <div className="grid gap-4 md:grid-cols-2">
-            {[
-              ["Core API Latency", "42ms", "15%", "Optimal"],
-              ["Database Load", "68%", "68%", "Moderate"],
-            ].map(([label, value, width, status]) => (
-              <div className="rounded-lg border border-outline-variant/20 bg-surface p-4" key={label}>
-                <div className="mb-2 flex justify-between text-sm">
-                  <span className="font-semibold">{label}</span>
-                  <span className="text-on-surface-variant">{value}</span>
-                </div>
-                <div className="h-2 overflow-hidden rounded-full bg-surface-container-high">
-                  <div className="h-full bg-secondary" style={{ width }} />
-                </div>
-                <p className="mt-3 text-right text-xs font-semibold text-on-surface-variant">{status}</p>
-              </div>
-            ))}
-            <div className="rounded-lg border border-outline-variant/20 bg-surface p-4 md:col-span-2">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <h3 className="font-semibold">Object Storage Cluster</h3>
-                  <p className="text-sm text-on-surface-variant">Private attachments bucket with signed URLs</p>
-                </div>
-                <div className="text-right">
-                  <div className="font-heading text-xl font-semibold">14.2 TB</div>
-                  <div className="text-xs text-on-surface-variant">of 50 TB allocated</div>
-                </div>
-              </div>
+        <SectionCard className="lg:col-span-2" title="All Workspaces">
+          {workspaces.length === 0 ? (
+            <p className="text-sm text-on-surface-variant">No workspaces yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[600px] text-left text-sm">
+                <thead className="bg-surface-container-low text-xs uppercase text-outline">
+                  <tr>
+                    <th className="p-4">Workspace</th>
+                    <th className="p-4">Plan</th>
+                    <th className="p-4">Members</th>
+                    <th className="p-4">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-outline-variant/40">
+                  {workspaces.map((ws) => (
+                    <tr key={ws.id}>
+                      <td className="p-4 font-semibold">{ws.name}</td>
+                      <td className="p-4 capitalize">{ws.plan}</td>
+                      <td className="p-4">{ws.members}</td>
+                      <td className="p-4">
+                        <StatusPill
+                          tone={
+                            ws.status === "active"
+                              ? "success"
+                              : ws.status === "past_due"
+                                ? "danger"
+                                : "neutral"
+                          }
+                        >
+                          {ws.status}
+                        </StatusPill>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          </div>
+          )}
         </SectionCard>
+
         <SectionCard title="Pending Actions">
           <div className="space-y-4">
             {[
-              ["Review Suspended Account", "Workspace ID #8842 flagged for TOS violation.", "danger"],
+              ["Review Suspended Account", "Workspace flagged for TOS violation.", "danger"],
               ["Enterprise KYC Approval", "Apex Property Group pending final sign-off.", "info"],
               ["Partner API Access", "Airbnb and VRBO connectors awaiting credentials.", "neutral"],
             ].map(([title, body, tone]) => (
-              <div className="rounded-lg border border-transparent p-3 hover:border-outline-variant/30 hover:bg-surface" key={title}>
+              <div
+                className="rounded-lg border border-transparent p-3 hover:border-outline-variant/30 hover:bg-surface"
+                key={title}
+              >
                 <StatusPill tone={tone as "danger" | "info" | "neutral"}>{title}</StatusPill>
                 <p className="mt-2 text-sm text-on-surface-variant">{body}</p>
               </div>

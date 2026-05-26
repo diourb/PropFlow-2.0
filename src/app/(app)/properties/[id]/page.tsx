@@ -1,14 +1,14 @@
 import Link from "next/link";
-import Image from "next/image";
 import { Bath, BedDouble, MapPin, Square, Star, Wifi } from "lucide-react";
 import { PageHeader } from "@/components/app/page-header";
 import { SectionCard } from "@/components/app/section-card";
 import { StatusPill } from "@/components/app/status-pill";
+import { PropertyEditDialog } from "@/components/workflows/operation-dialogs";
 import {
-  EditPropertyButton,
   OwnershipActions,
   PropertyCalendar,
   PropertyFinancials,
+  PropertyHero,
   ViewListingButton,
 } from "@/components/workflows/property-detail-client";
 import { getOperationsSnapshot } from "@/lib/data/repository";
@@ -31,7 +31,7 @@ export default async function PropertyProfilePage({
 }) {
   const { id } = await params;
   const { tab = "overview" } = await searchParams;
-  const { properties, bookings, cleaningTasks, maintenanceRequests } =
+  const { properties, bookings, cleaningTasks, maintenanceRequests, owners } =
     await getOperationsSnapshot();
   const property = properties.find((item) => item.id === id);
 
@@ -51,6 +51,7 @@ export default async function PropertyProfilePage({
   const propertyBookings = bookings.filter((b) => b.property === property.name);
   const propertyTasks = cleaningTasks.filter((t) => t.property === property.name);
   const propertyMaintenance = maintenanceRequests.filter((m) => m.property === property.name);
+  const owner = owners.find((item) => item.name === property.owner);
 
   return (
     <>
@@ -65,42 +66,21 @@ export default async function PropertyProfilePage({
         action={
           <div className="flex gap-3">
             <ViewListingButton address={property.address} name={property.name} />
-            <EditPropertyButton id={id} />
+            <PropertyEditDialog property={property} variant="button" />
           </div>
         }
         title={property.name}
         description={property.address}
       />
 
-      {/* Hero image */}
-      <div className="mb-8 overflow-hidden rounded-xl ambient-shadow">
-        <div className="relative h-72 md:h-[340px]">
-          <Image
-            alt={property.name}
-            className="object-cover"
-            fill
-            sizes="(min-width: 768px) calc(100vw - 280px), 100vw"
-            src={property.image}
-          />
-          <div className="absolute bottom-4 left-4 rounded-lg border border-white/30 bg-surface-container-lowest/90 px-4 py-2 backdrop-blur">
-            <span className="flex items-center gap-2 text-sm font-semibold text-primary">
-              <MapPin size={17} />
-              {property.address}
-            </span>
-          </div>
-          <div className="absolute right-4 top-4">
-            <StatusPill
-              tone={
-                property.status === "Maintenance" ? "danger"
-                  : property.status === "Vacant" ? "success"
-                  : "info"
-              }
-            >
-              {property.status}
-            </StatusPill>
-          </div>
-        </div>
-      </div>
+      {/* Hero image with photo upload */}
+      <PropertyHero
+        address={property.address}
+        alt={property.name}
+        propertyId={id}
+        src={property.image}
+        status={property.status}
+      />
 
       {/* Tabs */}
       <div className="mb-8 flex gap-6 overflow-x-auto border-b border-outline-variant">
@@ -200,7 +180,11 @@ export default async function PropertyProfilePage({
                   <StatusPill tone="success">Active Owner</StatusPill>
                 </div>
               </div>
-              <OwnershipActions address={property.address} ownerName={property.owner} />
+              <OwnershipActions
+                email={owner?.email}
+                ownerName={property.owner}
+                phone={owner?.phone}
+              />
             </SectionCard>
           </div>
         </div>

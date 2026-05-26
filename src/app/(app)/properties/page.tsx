@@ -1,8 +1,9 @@
 import Link from "next/link";
 import Image from "next/image";
-import { CalendarDays, MapPin, Users } from "lucide-react";
+import { Building2, CalendarDays, MapPin, Search, Users } from "lucide-react";
 import { PageHeader } from "@/components/app/page-header";
 import { StatusPill } from "@/components/app/status-pill";
+import { EmptyState } from "@/components/app/empty-state";
 import { PropertyCreateDialog, PropertyEditDialog } from "@/components/workflows/operation-dialogs";
 import { getOperationsSnapshot } from "@/lib/data/repository";
 import type { PropertyStatus } from "@/lib/types";
@@ -68,22 +69,28 @@ export default async function PropertiesPage({
       </form>
 
       {filteredProperties.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-outline-variant bg-surface-container-lowest p-10 text-center ambient-shadow">
+        <div className="mt-8">
           {properties.length === 0 ? (
-            <>
-              <h2 className="font-heading text-2xl font-semibold text-primary">No properties yet</h2>
-              <p className="mt-2 text-sm text-on-surface-variant">
-                Add the first property to unlock bookings, tasks, owner statements, and reports.
-              </p>
-              <div className="mt-6 flex justify-center">
-                <PropertyCreateDialog />
-              </div>
-            </>
+            <EmptyState
+              title="No properties yet"
+              description="Add the first property to unlock bookings, tasks, owner statements, and reports."
+              icon={Building2}
+              action={<PropertyCreateDialog />}
+            />
           ) : (
-            <>
-              <h2 className="font-heading text-2xl font-semibold text-primary">No properties match</h2>
-              <p className="mt-2 text-sm text-on-surface-variant">Try a different status filter.</p>
-            </>
+            <EmptyState
+              title="No properties match"
+              description="Try adjusting your filters or search query to find what you're looking for."
+              icon={Search}
+              action={
+                <Link
+                  className="flex h-11 items-center rounded-lg border border-outline-variant px-6 text-sm font-semibold"
+                  href="/properties"
+                >
+                  Clear All Filters
+                </Link>
+              }
+            />
           )}
         </div>
       ) : (

@@ -1,9 +1,113 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
-import { useState } from "react";
-import { ChevronLeft, ChevronRight, ExternalLink, Mail, Phone } from "lucide-react";
+import { useRef, useState } from "react";
+import { Camera, ChevronLeft, ChevronRight, ExternalLink, Mail, Phone } from "lucide-react";
 import type { Booking, MaintenanceRequest, Property } from "@/lib/types";
+
+/* ──── Property Hero with Photo Upload ──── */
+export function PropertyHero({
+  src,
+  alt,
+  propertyId,
+  address,
+  status,
+}: {
+  src: string;
+  alt: string;
+  propertyId: string;
+  address: string;
+  status: Property["status"];
+}) {
+  const [imgSrc, setImgSrc] = useState(src);
+  const [uploading, setUploading] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  async function handleFile(file: File) {
+    setUploading(true);
+    setUploadMsg("");
+    const fd = new FormData();
+    fd.set("file", file);
+    fd.set("propertyId", propertyId);
+    try {
+      const res = await fetch("/api/storage/property", { method: "POST", body: fd });
+      const data = (await res.json()) as { signedUrl?: string; error?: string };
+      if (data.signedUrl) {
+        setImgSrc(data.signedUrl);
+        setUploadMsg("Cover photo updated.");
+      } else {
+        setUploadMsg(data.error ?? "Upload failed.");
+      }
+    } catch {
+      setUploadMsg("Upload failed. Please try again.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <div className="mb-8 overflow-hidden rounded-xl ambient-shadow">
+      <div className="relative h-72 md:h-[340px]">
+        <Image
+          alt={alt}
+          className="object-cover"
+          fill
+          loading="eager"
+          sizes="(min-width: 768px) calc(100vw - 280px), 100vw"
+          src={imgSrc}
+          unoptimized={imgSrc.startsWith("blob:") || imgSrc.includes("supabase")}
+        />
+        <div className="absolute bottom-4 left-4 rounded-lg border border-white/30 bg-surface-container-lowest/90 px-4 py-2 backdrop-blur">
+          <span className="flex items-center gap-2 text-sm font-semibold text-primary">
+            <Camera size={17} />
+            {address}
+          </span>
+        </div>
+        <button
+          aria-label="Upload cover photo"
+          className="absolute bottom-4 right-16 flex items-center gap-1.5 rounded-lg border border-white/30 bg-surface-container-lowest/90 px-3 py-2 text-xs font-semibold text-on-surface backdrop-blur transition hover:bg-surface-container-lowest disabled:opacity-60"
+          disabled={uploading}
+          onClick={() => inputRef.current?.click()}
+          type="button"
+        >
+          <Camera size={14} />
+          {uploading ? "Uploading…" : "Update Photo"}
+        </button>
+        <input
+          accept="image/*"
+          className="sr-only"
+          ref={inputRef}
+          type="file"
+          onChange={async (e) => {
+            const file = e.currentTarget.files?.[0];
+            if (file) await handleFile(file);
+            e.currentTarget.value = "";
+          }}
+        />
+        <div className="absolute right-4 top-4">
+          <span
+            className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
+              status === "Maintenance"
+                ? "bg-error-container text-error"
+                : status === "Vacant"
+                ? "bg-secondary-container text-on-secondary-container"
+                : "bg-primary-container text-on-primary"
+            }`}
+          >
+            {status}
+          </span>
+        </div>
+      </div>
+      {uploadMsg ? (
+        <div className="border-t border-outline-variant/30 bg-surface-container-lowest px-4 py-2 text-xs font-semibold text-on-surface-variant">
+          {uploadMsg}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 /* ──── Calendar Tab ──── */
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -23,8 +127,10 @@ export function PropertyCalendar({
   bookings: Booking[];
 }) {
   const today = new Date();
-  const [year, setYear] = useState(today.getFullYear());
-  const [month, setMonth] = useState(today.getMonth());
+  const firstBookingDate = getBookingStartDate(bookings[0]?.stayDates, today.getFullYear());
+  const initialDate = firstBookingDate ?? today;
+  const [year, setYear] = useState(initialDate.getFullYear());
+  const [month, setMonth] = useState(initialDate.getMonth());
 
   const daysInMonth = getDaysInMonth(year, month);
   const firstDay = getFirstDayOfMonth(year, month);
@@ -65,14 +171,18 @@ export function PropertyCalendar({
         </h3>
         <div className="flex gap-2">
           <button
+            aria-label="Previous month"
             className="flex h-9 w-9 items-center justify-center rounded-lg border border-outline-variant text-on-surface hover:bg-surface-container-low"
             onClick={prevMonth}
+            type="button"
           >
             <ChevronLeft size={18} />
           </button>
           <button
+            aria-label="Next month"
             className="flex h-9 w-9 items-center justify-center rounded-lg border border-outline-variant text-on-surface hover:bg-surface-container-low"
             onClick={nextMonth}
+            type="button"
           >
             <ChevronRight size={18} />
           </button>
@@ -194,42 +304,81 @@ export function PropertyFinancials({
   );
 }
 
+function getBookingStartDate(stayDates: string | undefined, fallbackYear: number) {
+  if (!stayDates) return null;
+  const [start] = stayDates.split(" - ");
+  if (!start) return null;
+  const parsed = new Date(/\d{4}/.test(start) ? start : `${start}, ${fallbackYear}`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 /* ──── Ownership Actions (Message / Call) ──── */
-export function OwnershipActions({ ownerName }: { ownerName: string; address: string }) {
-  const [modal, setModal] = useState<"map" | null>(null);
+export function OwnershipActions({
+  ownerName,
+  email,
+  phone,
+}: {
+  ownerName: string;
+  email?: string;
+  phone?: string;
+}) {
+  const [modal, setModal] = useState(false);
+  const cleanPhone = phone?.replace(/[^\d+]/g, "");
 
   return (
     <>
       <div className="flex gap-2">
-        <a
-          className="flex h-10 flex-1 items-center justify-center gap-2 rounded-lg border border-outline-variant text-sm font-semibold hover:bg-surface-container-low"
-          href={`mailto:`}
-          title={`Email ${ownerName}`}
-        >
-          <Mail size={16} />
-          Message
-        </a>
-        <button
-          className="flex h-10 flex-1 items-center justify-center gap-2 rounded-lg border border-outline-variant text-sm font-semibold hover:bg-surface-container-low"
-          onClick={() => setModal("map")}
-          type="button"
-        >
-          <Phone size={16} />
-          Call
-        </button>
+        {email ? (
+          <a
+            className="flex h-10 flex-1 items-center justify-center gap-2 rounded-lg border border-outline-variant text-sm font-semibold hover:bg-surface-container-low"
+            href={`mailto:${email}`}
+            title={`Email ${ownerName}`}
+          >
+            <Mail size={16} />
+            Message
+          </a>
+        ) : (
+          <button
+            className="flex h-10 flex-1 items-center justify-center gap-2 rounded-lg border border-outline-variant text-sm font-semibold hover:bg-surface-container-low"
+            onClick={() => setModal(true)}
+            type="button"
+          >
+            <Mail size={16} />
+            Message
+          </button>
+        )}
+        {cleanPhone ? (
+          <a
+            className="flex h-10 flex-1 items-center justify-center gap-2 rounded-lg border border-outline-variant text-sm font-semibold hover:bg-surface-container-low"
+            href={`tel:${cleanPhone}`}
+            title={`Call ${ownerName}`}
+          >
+            <Phone size={16} />
+            Call
+          </a>
+        ) : (
+          <button
+            className="flex h-10 flex-1 items-center justify-center gap-2 rounded-lg border border-outline-variant text-sm font-semibold hover:bg-surface-container-low"
+            onClick={() => setModal(true)}
+            type="button"
+          >
+            <Phone size={16} />
+            Call
+          </button>
+        )}
       </div>
 
-      {modal === "map" ? (
+      {modal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-on-background/40 p-4 backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-xl border border-outline-variant bg-surface p-6 ambient-shadow">
             <h2 className="font-heading text-xl font-semibold text-primary">{ownerName}</h2>
             <p className="mt-2 text-sm text-on-surface-variant">
-              Owner contact details are managed in your CRM. Use the Owners section to view full contact info.
+              Add owner email and phone details in the Owners section to enable direct contact actions.
             </p>
             <div className="mt-4 flex gap-3">
               <button
                 className="h-10 flex-1 rounded-lg border border-outline-variant text-sm font-semibold"
-                onClick={() => setModal(null)}
+                onClick={() => setModal(false)}
                 type="button"
               >
                 Close
@@ -237,7 +386,7 @@ export function OwnershipActions({ ownerName }: { ownerName: string; address: st
               <Link
                 className="flex h-10 flex-1 items-center justify-center gap-2 rounded-lg bg-primary-container text-sm font-semibold text-on-primary"
                 href="/owners"
-                onClick={() => setModal(null)}
+                onClick={() => setModal(false)}
               >
                 View Owners
               </Link>
@@ -262,17 +411,5 @@ export function ViewListingButton({ address, name }: { address: string; name: st
       <ExternalLink size={15} />
       View on Map
     </a>
-  );
-}
-
-/* ──── Edit Profile CTA → opens edit dialog ──── */
-export function EditPropertyButton({ id }: { id: string }) {
-  return (
-    <Link
-      className="flex h-11 items-center rounded-lg bg-primary-container px-4 text-sm font-semibold text-on-primary hover:bg-primary"
-      href={`/properties/${id}?tab=overview`}
-    >
-      Edit Profile
-    </Link>
   );
 }

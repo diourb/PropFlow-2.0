@@ -1,9 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Mail, MoreVertical, Shield, Trash2, X } from "lucide-react";
-import { saveNotificationPreferences, updateWorkspaceSettings } from "@/app/actions";
+import { Loader2, Mail, MoreVertical, Shield, Trash2, X } from "lucide-react";
+import {
+  connectIntegration,
+  disconnectIntegration,
+  removeTeamMember,
+  saveNotificationPreferences,
+  updateTeamMemberRole,
+  updateWorkspaceSettings,
+} from "@/app/actions";
 import { ConfirmDialog } from "@/components/app/confirm-dialog";
 import type { Role, TeamMember } from "@/lib/types";
 
@@ -122,6 +129,83 @@ export function WorkspaceNotificationsTab() {
   );
 }
 
+/* ────────── Integration Connect/Disconnect ────────── */
+type IntegrationActionState = { ok: boolean; message: string } | null;
+
+export function IntegrationActions({
+  integration,
+  hasSupabase,
+}: {
+  integration: import("@/lib/types").Integration;
+  hasSupabase: boolean;
+}) {
+  const { provider, status, lastSyncAt, metadata } = integration;
+  const [connectState, connectAction, connectPending] = useActionState<IntegrationActionState, FormData>(
+    connectIntegration,
+    null,
+  );
+  const [disconnectState, disconnectAction, disconnectPending] = useActionState<IntegrationActionState, FormData>(
+    disconnectIntegration,
+    null,
+  );
+  const msg = connectState?.message ?? disconnectState?.message ?? "";
+
+  if (!hasSupabase) {
+    return (
+      <p className="mt-3 text-xs text-on-surface-variant">
+        Credentials not configured
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-4 space-y-3">
+      {lastSyncAt && (
+        <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant/70">
+          <span>Last Sync</span>
+          <span>{new Date(lastSyncAt).toLocaleString()}</span>
+        </div>
+      )}
+      {typeof metadata?.last_sync_count === "number" && (
+        <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-secondary">
+          <span>Synced Items</span>
+          <span>{metadata.last_sync_count}</span>
+        </div>
+      )}
+      <div className="flex items-center gap-2 pt-1">
+        {status === "connected" ? (
+          <form action={disconnectAction}>
+            <input name="provider" type="hidden" value={provider} />
+            <button
+              className="flex h-8 items-center gap-1 rounded-lg border border-error/40 px-3 text-xs font-semibold text-error hover:bg-error/5 disabled:opacity-60"
+              disabled={disconnectPending}
+              type="submit"
+            >
+              {disconnectPending ? <Loader2 className="animate-spin" size={12} /> : null}
+              Disconnect
+            </button>
+          </form>
+        ) : (
+          <form action={connectAction}>
+            <input name="provider" type="hidden" value={provider} />
+            <button
+              className="flex h-8 items-center gap-1 rounded-lg bg-primary-container px-3 text-xs font-semibold text-on-primary hover:bg-primary disabled:opacity-60"
+              disabled={connectPending}
+              type="submit"
+            >
+              {connectPending ? <Loader2 className="animate-spin" size={12} /> : null}
+              Connect
+            </button>
+          </form>
+        )}
+        {msg ? (
+          <span className="text-xs text-on-surface-variant">{msg}</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 /* ────────── Team Member Actions Dropdown ────────── */
 const roleOptions: Array<{ value: Role; label: string }> = [
   { value: "workspace_admin", label: "Admin" },
@@ -132,10 +216,12 @@ const roleOptions: Array<{ value: Role; label: string }> = [
 ];
 
 export function TeamMemberActionsMenu({ member }: { member: TeamMember }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [roleOpen, setRoleOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [message, setMessage] = useState("");
+  const [isPending, startTransition] = useTransition();
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -181,11 +267,18 @@ export function TeamMemberActionsMenu({ member }: { member: TeamMember }) {
                 {roleOptions.map(({ value, label }) => (
                   <button
                     className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs font-semibold ${value === member.role ? "text-secondary" : "text-on-surface hover:bg-surface-container-low"}`}
+                    disabled={isPending || value === member.role}
                     key={value}
                     onClick={() => {
-                      setMessage(`Role updated to ${label} (demo only).`);
-                      setOpen(false);
-                      setRoleOpen(false);
+                      const formData = new FormData();
+                      formData.set("id", member.id);
+                      formData.set("role", value);
+                      startTransition(async () => {
+                        const result = await updateTeamMemberRole(formData);
+                        setMessage(result.message);
+                        setRoleOpen(false);
+                        if (result.ok) router.refresh();
+                      });
                     }}
                     type="button"
                   >
@@ -239,8 +332,12 @@ export function TeamMemberActionsMenu({ member }: { member: TeamMember }) {
         description={`${member.name} will be removed from the workspace. They will lose all access immediately.`}
         onCancel={() => setConfirmRemove(false)}
         onConfirm={async () => {
-          setMessage(`${member.name} removed (demo only).`);
+          const formData = new FormData();
+          formData.set("id", member.id);
+          const result = await removeTeamMember(formData);
+          setMessage(result.message);
           setConfirmRemove(false);
+          if (result.ok) router.refresh();
         }}
         open={confirmRemove}
         title="Remove Team Member?"

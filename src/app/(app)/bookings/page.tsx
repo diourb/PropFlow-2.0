@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { Download } from "lucide-react";
+import { Calendar, Download, Search } from "lucide-react";
 import { PageHeader } from "@/components/app/page-header";
 import { StatusPill } from "@/components/app/status-pill";
+import { EmptyState } from "@/components/app/empty-state";
 import { BookingCreateDialog, BookingRowActions } from "@/components/workflows/operation-dialogs";
 import { getOperationsSnapshot } from "@/lib/data/repository";
 
@@ -33,6 +34,8 @@ export default async function BookingsPage({
       !statusFilter ||
       b.status.toLowerCase().replace(/[^a-z]/g, "") === statusFilter.toLowerCase().replace(/[^a-z]/g, ""),
     );
+
+  const isFiltered = query || paymentFilter || platformFilter || statusFilter;
 
   return (
     <>
@@ -111,25 +114,44 @@ export default async function BookingsPage({
         </div>
       </form>
 
-      <div className="overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest ambient-shadow">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1080px] text-left text-sm">
-            <thead className="bg-surface-container-low text-xs uppercase tracking-wide text-on-surface-variant">
-              <tr>
-                {["Guest", "Property", "Stay Dates", "Platform", "Payment", "Status", "Amount", "Actions"].map((h) => (
-                  <th className="px-4 py-3 font-semibold" key={h}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-outline-variant/50">
-              {filteredBookings.length === 0 ? (
+      {filteredBookings.length === 0 ? (
+        <div className="mt-8">
+          {!isFiltered && bookings.length === 0 ? (
+            <EmptyState
+              title="No bookings yet"
+              description="Your booking list is empty. Add a manual booking or connect an integration to sync your calendars."
+              icon={Calendar}
+              action={<BookingCreateDialog properties={properties} />}
+            />
+          ) : (
+            <EmptyState
+              title="No bookings match"
+              description="We couldn't find any bookings matching your current filters."
+              icon={Search}
+              action={
+                <Link
+                  className="flex h-11 items-center rounded-lg border border-outline-variant px-6 text-sm font-semibold"
+                  href="/bookings"
+                >
+                  Clear All Filters
+                </Link>
+              }
+            />
+          )}
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest ambient-shadow">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1080px] text-left text-sm">
+              <thead className="bg-surface-container-low text-xs uppercase tracking-wide text-on-surface-variant">
                 <tr>
-                  <td className="px-4 py-8 text-center text-sm text-on-surface-variant" colSpan={8}>
-                    No bookings match the current filters.
-                  </td>
+                  {["Guest", "Property", "Stay Dates", "Platform", "Payment", "Status", "Amount", "Actions"].map((h) => (
+                    <th className="px-4 py-3 font-semibold" key={h}>{h}</th>
+                  ))}
                 </tr>
-              ) : (
-                filteredBookings.map((booking) => (
+              </thead>
+              <tbody className="divide-y divide-outline-variant/50">
+                {filteredBookings.map((booking) => (
                   <tr className="hover:bg-surface-bright" key={booking.id}>
                     <td className="px-4 py-4">
                       <div className="flex items-center gap-3">
@@ -170,12 +192,12 @@ export default async function BookingsPage({
                       <BookingRowActions booking={booking} properties={properties} />
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      )}
     </>
   );
 }

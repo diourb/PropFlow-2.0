@@ -7,6 +7,7 @@ import { Download, FileText, Pencil, Plus, Search, Trash2, X } from "lucide-reac
 import { createOwner, deleteOwner, updateOwner } from "@/app/actions";
 import { ConfirmDialog } from "@/components/app/confirm-dialog";
 import { StatusPill } from "@/components/app/status-pill";
+import { EmptyState } from "@/components/app/empty-state";
 import type { OwnerProfile, OwnerStatement, Property } from "@/lib/types";
 
 function OwnerForm({
@@ -145,12 +146,30 @@ export function OwnersManager({
       </div>
 
       {owners.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-outline-variant bg-surface-container-lowest p-10 text-center ambient-shadow">
-          <h2 className="font-heading text-2xl font-semibold text-primary">No owners found</h2>
-          <p className="mt-2 text-sm text-on-surface-variant">Add an owner or clear filters to see the portfolio.</p>
-          <button className="mt-6 h-11 rounded-lg bg-primary-container px-5 text-sm font-semibold text-on-primary" onClick={() => setCreateOpen(true)} type="button">
-            Add first owner
-          </button>
+        <div className="mt-8">
+          <EmptyState
+            title="No owners found"
+            description="Your search or filters didn't return any results. Add an owner or clear filters to see your portfolio's owners."
+            icon={Search}
+            action={
+              <div className="flex gap-3">
+                <button
+                  className="h-11 rounded-lg border border-outline-variant px-6 text-sm font-semibold"
+                  onClick={() => { setQuery(""); setStatus(""); }}
+                  type="button"
+                >
+                  Clear Filters
+                </button>
+                <button
+                  className="h-11 rounded-lg bg-primary-container px-6 text-sm font-semibold text-on-primary"
+                  onClick={() => setCreateOpen(true)}
+                  type="button"
+                >
+                  Add New Owner
+                </button>
+              </div>
+            }
+          />
         </div>
       ) : (
         <div className="grid gap-6 lg:grid-cols-3">

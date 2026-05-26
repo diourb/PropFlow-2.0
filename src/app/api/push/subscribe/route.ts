@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { getServerSupabase } from "@/lib/supabase/server";
 
 export async function POST(request: Request) {
-  const subscription = await request.json();
+  const body = await request.json() as {
+    endpoint?: string;
+    keys?: { p256dh?: string; auth?: string };
+  };
+
   const supabase = await getServerSupabase();
 
   if (supabase) {
@@ -22,13 +26,22 @@ export async function POST(request: Request) {
       .limit(1)
       .maybeSingle();
 
-    await supabase.from("notification_preferences").upsert({
-      user_id: user.id,
-      workspace_id: membership?.workspace_id ?? null,
-      channel: "push",
-      enabled: true,
-      metadata: subscription,
-    });
+    const endpoint = body?.endpoint;
+    const p256dh = body?.keys?.p256dh;
+    const auth = body?.keys?.auth;
+
+    if (endpoint && p256dh && auth) {
+      await supabase.from("push_subscriptions").upsert(
+        {
+          user_id: user.id,
+          workspace_id: membership?.workspace_id ?? null,
+          endpoint,
+          p256dh,
+          auth,
+        },
+        { onConflict: "user_id,endpoint" },
+      );
+    }
   }
 
   return NextResponse.json({

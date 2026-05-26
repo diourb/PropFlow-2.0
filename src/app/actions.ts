@@ -7,6 +7,7 @@ import { hasSupabaseEnv } from "@/lib/supabase/env";
 import { getServerSupabase } from "@/lib/supabase/server";
 import type { Booking, MaintenanceRequest, Property, Role } from "@/lib/types";
 import {
+  connectIntegrationRecord,
   createBookingRecord,
   createCleaningTaskRecord,
   createGuestMaintenanceRequestRecord,
@@ -20,9 +21,12 @@ import {
   deleteMaintenanceRequestRecord,
   deleteOwnerRecord,
   deletePropertyRecord,
+  disconnectIntegrationRecord,
+  getOwnerStatementsRecord,
   inviteMemberRecord,
   markAllNotificationsReadRecord,
   markNotificationReadRecord,
+  removeTeamMemberRecord,
   saveNotificationPreferencesRecord,
   setDemoRole,
   submitIssueReportRecord,
@@ -33,9 +37,11 @@ import {
   updateMaintenanceRequestRecord,
   updateOwnerRecord,
   updatePropertyRecord,
+  updateTeamMemberRoleRecord,
   updateWorkOrderStatusRecord,
   updateWorkspaceSettingsRecord,
 } from "@/lib/data/repository";
+import { sendEmail } from "@/lib/integrations/notifications";
 import { roleHomePath } from "@/lib/routing";
 
 type ActionResult = {
@@ -270,6 +276,30 @@ export async function inviteMember(formData: FormData): Promise<ActionResult> {
   return result;
 }
 
+export async function updateTeamMemberRole(formData: FormData): Promise<ActionResult> {
+  const id = String(formData.get("id") ?? "").trim();
+  const parsedRole = roleSchema.safeParse(formData.get("role"));
+  if (!id) return { ok: false, message: "Team member ID is required." };
+  if (!parsedRole.success) return { ok: false, message: "Role is invalid." };
+
+  const result = await updateTeamMemberRoleRecord(id, parsedRole.data);
+  revalidatePath("/settings/workspace");
+  revalidatePath("/notifications");
+  revalidatePath("/", "layout");
+  return result;
+}
+
+export async function removeTeamMember(formData: FormData): Promise<ActionResult> {
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) return { ok: false, message: "Team member ID is required." };
+
+  const result = await removeTeamMemberRecord(id);
+  revalidatePath("/settings/workspace");
+  revalidatePath("/notifications");
+  revalidatePath("/", "layout");
+  return result;
+}
+
 export async function createProperty(formData: FormData): Promise<ActionResult> {
   const name = String(formData.get("name") ?? "").trim();
   if (!name) return { ok: false, message: "Property name is required." };
@@ -290,13 +320,29 @@ export async function createBooking(formData: FormData): Promise<ActionResult> {
   const guestName = String(formData.get("guestName") ?? "").trim();
   if (!guestName) return { ok: false, message: "Guest name is required." };
 
+  const email = String(formData.get("email") ?? "");
+  const property = String(formData.get("property") ?? "Unassigned Property");
+
   const result = await createBookingRecord({
     guestName,
-    email: String(formData.get("email") ?? ""),
-    property: String(formData.get("property") ?? "Unassigned Property"),
+    email,
+    property,
     platform: String(formData.get("platform") ?? "Direct") as Booking["platform"],
     amount: Number(formData.get("amount") ?? 0),
+    checkIn: String(formData.get("checkIn") ?? ""),
+    checkOut: String(formData.get("checkOut") ?? ""),
   });
+
+  if (result.ok && email) {
+    sendEmail(
+      email,
+      `Booking confirmed — ${property}`,
+      `<p>Hi ${guestName},</p><p>Your booking for <strong>${property}</strong> is confirmed.</p>`,
+    ).catch((err: unknown) => {
+      console.error("[createBooking] email send failed:", err);
+    });
+  }
+
   revalidatePath("/bookings");
   revalidatePath("/cleaning");
   revalidatePath("/field/cleaning");
@@ -416,6 +462,7 @@ export async function saveNotificationPreferences(formData: FormData): Promise<A
 
   const result = await saveNotificationPreferencesRecord(channels);
   revalidatePath("/settings/account");
+  revalidatePath("/settings/workspace");
   return result;
 }
 
@@ -432,6 +479,7 @@ export async function updateProperty(formData: FormData): Promise<ActionResult> 
     status: String(formData.get("status") ?? "Vacant") as Property["status"],
   });
   revalidatePath("/properties");
+  revalidatePath(`/properties/${id}`);
   revalidatePath("/dashboard");
   return result;
 }
@@ -450,7 +498,7 @@ export async function updateBooking(formData: FormData): Promise<ActionResult> {
   const guestName = String(formData.get("guestName") ?? "").trim();
   if (!id) return { ok: false, message: "Booking ID is required." };
   if (!guestName) return { ok: false, message: "Guest name is required." };
-  const result = await updateBookingRecord(id, {
+  const updates: Parameters<typeof updateBookingRecord>[1] = {
     guest: guestName,
     email: String(formData.get("email") ?? ""),
     property: String(formData.get("property") ?? ""),
@@ -458,7 +506,11 @@ export async function updateBooking(formData: FormData): Promise<ActionResult> {
     amount: Number(formData.get("amount") ?? 0),
     status: String(formData.get("status") ?? "Confirmed") as Booking["status"],
     payment: String(formData.get("payment") ?? "Unpaid") as Booking["payment"],
-  });
+  };
+  if (formData.has("checkIn")) updates.checkIn = String(formData.get("checkIn") ?? "");
+  if (formData.has("checkOut")) updates.checkOut = String(formData.get("checkOut") ?? "");
+
+  const result = await updateBookingRecord(id, updates);
   revalidatePath("/bookings");
   revalidatePath("/dashboard");
   return result;
@@ -550,14 +602,28 @@ export async function createMaintenanceRequest(formData: FormData): Promise<Acti
   const property = String(formData.get("property") ?? "").trim();
   const title = String(formData.get("title") ?? "").trim();
   if (!title) return { ok: false, message: "Title is required." };
+
+  const assignee = String(formData.get("assignee") ?? "").trim();
   const result = await createMaintenanceRequestRecord({
     property,
     title,
     description: String(formData.get("description") ?? "").trim(),
     priority: String(formData.get("priority") ?? "Routine") as MaintenanceRequest["priority"],
-    assignee: String(formData.get("assignee") ?? "").trim(),
+    assignee,
     estimate: String(formData.get("estimate") ?? "").trim(),
   });
+
+  // If the assignee looks like an email, notify them
+  if (result.ok && assignee.includes("@")) {
+    sendEmail(
+      assignee,
+      `New work order assigned — ${title}`,
+      `<p>A new maintenance work order has been assigned to you: <strong>${title}</strong> at ${property || "a property"}.</p>`,
+    ).catch((err: unknown) => {
+      console.error("[createMaintenanceRequest] email send failed:", err);
+    });
+  }
+
   revalidatePath("/maintenance");
   revalidatePath("/field/maintenance");
   revalidatePath("/calendar");
@@ -652,4 +718,113 @@ export async function markAllNotificationsRead(): Promise<ActionResult> {
   revalidatePath("/notifications");
   revalidatePath("/", "layout");
   return result;
+}
+
+export async function connectIntegration(
+  _prevState: unknown,
+  formData: FormData,
+): Promise<ActionResult & { redirectUrl?: string }> {
+  const provider = String(formData.get("provider") ?? "").trim();
+  if (!provider) return { ok: false, message: "Provider is required." };
+
+  const result = await connectIntegrationRecord(provider);
+  if (result.redirectUrl) {
+    redirect(result.redirectUrl);
+  }
+  revalidatePath("/settings/workspace");
+  return result;
+}
+
+export async function disconnectIntegration(
+  _prevState: unknown,
+  formData: FormData,
+): Promise<ActionResult> {
+  const provider = String(formData.get("provider") ?? "").trim();
+  if (!provider) return { ok: false, message: "Provider is required." };
+
+  const result = await disconnectIntegrationRecord(provider);
+  revalidatePath("/settings/workspace");
+  return result;
+}
+
+export async function generatePdfReport(
+  _prevState: unknown,
+  formData: FormData,
+): Promise<ActionResult & { pdfBase64?: string }> {
+  const reportType = String(formData.get("type") ?? "statements");
+  const statements = await getOwnerStatementsRecord();
+
+  const lines: string[] = [
+    `PropFlow ${reportType === "statements" ? "Owner Statements" : reportType} Report`,
+    `Generated: ${new Date().toLocaleDateString()}`,
+    ``,
+    `Owner                  Properties  Revenue     Expenses    Payout      Status`,
+    `${"─".repeat(88)}`,
+    ...statements.map((s) =>
+      [
+        s.owner.padEnd(22).slice(0, 22),
+        String(s.properties).padStart(10),
+        `$${s.revenue.toLocaleString()}`.padStart(12),
+        `$${s.expenses.toLocaleString()}`.padStart(12),
+        `$${s.payout.toLocaleString()}`.padStart(12),
+        s.status.padStart(12),
+      ].join("  "),
+    ),
+    ``,
+    `Total Payout: $${statements.reduce((sum, s) => sum + s.payout, 0).toLocaleString()}`,
+  ];
+
+  const content = lines.join("\n");
+  const pdfBase64 = buildMinimalPdf(content);
+
+  return { ok: true, message: "PDF generated.", pdfBase64 };
+}
+
+function buildMinimalPdf(text: string): string {
+  const lines = text.split("\n");
+
+  // Build text stream: each line placed at decreasing y
+  const startY = 750;
+  const lineHeight = 14;
+  const textCommands = lines
+    .map((line, index) => {
+      const safeLine = line.replace(/[()\\]/g, (c) => `\\${c}`);
+      return `BT /F1 9 Tf 50 ${startY - index * lineHeight} Td (${safeLine}) Tj ET`;
+    })
+    .join("\n");
+
+  const stream = textCommands;
+  const streamLen = Buffer.byteLength(stream, "latin1");
+
+  const objects: string[] = [];
+
+  objects.push(`1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj`);
+  objects.push(`2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj`);
+  objects.push(
+    `3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]\n   /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj`,
+  );
+  objects.push(
+    `4 0 obj\n<< /Length ${streamLen} >>\nstream\n${stream}\nendstream\nendobj`,
+  );
+  objects.push(
+    `5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>\nendobj`,
+  );
+
+  const header = `%PDF-1.4\n`;
+  let body = header;
+  const offsets: number[] = [];
+
+  for (const obj of objects) {
+    offsets.push(Buffer.byteLength(body, "latin1"));
+    body += obj + "\n";
+  }
+
+  const xrefOffset = Buffer.byteLength(body, "latin1");
+  body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets) {
+    body += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  }
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+
+  return Buffer.from(body, "latin1").toString("base64");
 }

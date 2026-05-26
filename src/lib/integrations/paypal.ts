@@ -3,11 +3,24 @@ type PayPalToken = {
   expires_in: number;
 };
 
-export function hasPayPalCredentials() {
+const planEnvKeys = {
+  starter: "PAYPAL_PLAN_ID_STARTER",
+  professional: "PAYPAL_PLAN_ID_PROFESSIONAL",
+  enterprise: "PAYPAL_PLAN_ID_ENTERPRISE",
+} as const;
+
+export type PayPalPlanSlug = keyof typeof planEnvKeys;
+
+export function getPayPalPlanId(planSlug: string) {
+  const envKey = planEnvKeys[planSlug as PayPalPlanSlug] ?? planEnvKeys.professional;
+  return process.env[envKey];
+}
+
+export function hasPayPalCredentials(planSlug = "professional") {
   return Boolean(
     process.env.PAYPAL_CLIENT_ID &&
       process.env.PAYPAL_CLIENT_SECRET &&
-      process.env.PAYPAL_PLAN_ID_PROFESSIONAL,
+      getPayPalPlanId(planSlug),
   );
 }
 
@@ -41,8 +54,8 @@ export async function getPayPalAccessToken(): Promise<PayPalToken> {
   return response.json();
 }
 
-export async function createPayPalSubscription(planSlug: string) {
-  if (!hasPayPalCredentials()) {
+export async function createPayPalSubscription(planSlug: string, workspaceId?: string) {
+  if (!hasPayPalCredentials(planSlug)) {
     return {
       mode: "credential_required",
       message:
@@ -51,12 +64,7 @@ export async function createPayPalSubscription(planSlug: string) {
   }
 
   const token = await getPayPalAccessToken();
-  const planId =
-    planSlug === "enterprise"
-      ? process.env.PAYPAL_PLAN_ID_ENTERPRISE
-      : planSlug === "starter"
-        ? process.env.PAYPAL_PLAN_ID_STARTER
-        : process.env.PAYPAL_PLAN_ID_PROFESSIONAL;
+  const planId = getPayPalPlanId(planSlug);
 
   if (!planId) {
     throw new Error(`Missing PayPal plan ID for plan slug: ${planSlug}`);
@@ -70,6 +78,7 @@ export async function createPayPalSubscription(planSlug: string) {
     },
     body: JSON.stringify({
       plan_id: planId,
+      ...(workspaceId ? { custom_id: workspaceId } : {}),
       application_context: {
         brand_name: "PropFlow",
         user_action: "SUBSCRIBE_NOW",

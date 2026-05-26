@@ -12,6 +12,22 @@ type DialogState = {
   message: string;
 };
 
+type CreateDialogTrigger = "default" | "icon";
+
+function dateInputValue(value: string | undefined) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function bookingDatePart(stayDates: string, index: 0 | 1) {
+  return dateInputValue(stayDates.split(" - ")[index]);
+}
+
 function useDialogAction() {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -34,10 +50,7 @@ function useDialogAction() {
   };
 }
 
-/* ───────── Create Property ───────── */
-export function PropertyCreateDialog() {
-  const formRef = useRef<HTMLFormElement>(null);
-  const { isPending, state, setState, run } = useDialogAction();
+function useMounted() {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -45,16 +58,39 @@ export function PropertyCreateDialog() {
     return () => window.clearTimeout(timer);
   }, []);
 
+  return mounted;
+}
+
+/* ───────── Create Property ───────── */
+export function PropertyCreateDialog({ variant = "default" }: { variant?: CreateDialogTrigger } = {}) {
+  const formRef = useRef<HTMLFormElement>(null);
+  const { isPending, state, setState, run } = useDialogAction();
+  const mounted = useMounted();
+
   return (
     <>
-      <button
-        className="flex h-11 items-center gap-2 rounded-lg bg-primary-container px-4 text-sm font-semibold text-on-primary disabled:cursor-not-allowed disabled:opacity-60"
-        disabled={!mounted}
-        onClick={() => setState({ open: true, message: "" })}
-      >
-        <HousePlus size={17} />
-        Add Property
-      </button>
+      {variant === "icon" ? (
+        <button
+          aria-label="Add Property"
+          className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-container text-on-primary hover:bg-primary disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={!mounted}
+          onClick={() => setState({ open: true, message: "" })}
+          title="Add Property"
+          type="button"
+        >
+          <HousePlus size={18} />
+        </button>
+      ) : (
+        <button
+          className="flex h-11 items-center gap-2 rounded-lg bg-primary-container px-4 text-sm font-semibold text-on-primary disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={!mounted}
+          onClick={() => setState({ open: true, message: "" })}
+          type="button"
+        >
+          <HousePlus size={17} />
+          Add Property
+        </button>
+      )}
       {state.open ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-on-background/40 p-4 backdrop-blur-sm">
           <form
@@ -74,7 +110,12 @@ export function PropertyCreateDialog() {
                 <h2 className="font-heading text-2xl font-semibold text-primary">Add Property</h2>
                 <p className="text-sm text-on-surface-variant">Create a new property and start setup workflows.</p>
               </div>
-              <button className="rounded-full p-2 text-on-surface-variant hover:bg-surface-container" onClick={() => setState({ open: false, message: "" })} type="button">
+              <button
+                aria-label="Close Add Property"
+                className="rounded-full p-2 text-on-surface-variant hover:bg-surface-container"
+                onClick={() => setState({ open: false, message: "" })}
+                type="button"
+              >
                 <X size={20} />
               </button>
             </div>
@@ -110,7 +151,13 @@ export function PropertyCreateDialog() {
 }
 
 /* ───────── Edit Property ───────── */
-export function PropertyEditDialog({ property }: { property: Property }) {
+export function PropertyEditDialog({
+  property,
+  variant = "icon",
+}: {
+  property: Property;
+  variant?: "icon" | "button";
+}) {
   const formRef = useRef<HTMLFormElement>(null);
   const { isPending, state, setState, run } = useDialogAction();
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -124,15 +171,28 @@ export function PropertyEditDialog({ property }: { property: Property }) {
 
   return (
     <>
-      <button
-        aria-label="Edit property"
-        className="flex h-9 w-9 items-center justify-center rounded-lg border border-outline-variant text-on-surface hover:bg-surface-container-low disabled:cursor-not-allowed disabled:opacity-60"
-        disabled={!mounted}
-        onClick={() => setState({ open: true, message: "" })}
-        title="Edit property"
-      >
-        <Pencil size={15} />
-      </button>
+      {variant === "button" ? (
+        <button
+          className="flex h-11 items-center gap-2 rounded-lg bg-primary-container px-4 text-sm font-semibold text-on-primary hover:bg-primary disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={!mounted}
+          onClick={() => setState({ open: true, message: "" })}
+          type="button"
+        >
+          <Pencil size={15} />
+          Edit Profile
+        </button>
+      ) : (
+        <button
+          aria-label="Edit property"
+          className="flex h-9 w-9 items-center justify-center rounded-lg border border-outline-variant text-on-surface hover:bg-surface-container-low disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={!mounted}
+          onClick={() => setState({ open: true, message: "" })}
+          title="Edit property"
+          type="button"
+        >
+          <Pencil size={15} />
+        </button>
+      )}
 
       {state.open ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-on-background/40 p-4 backdrop-blur-sm">
@@ -151,7 +211,12 @@ export function PropertyEditDialog({ property }: { property: Property }) {
                 <h2 className="font-heading text-2xl font-semibold text-primary">Edit Property</h2>
                 <p className="text-sm text-on-surface-variant">Update property details.</p>
               </div>
-              <button className="rounded-full p-2 text-on-surface-variant hover:bg-surface-container" onClick={() => setState({ open: false, message: "" })} type="button">
+              <button
+                aria-label="Close Edit Property"
+                className="rounded-full p-2 text-on-surface-variant hover:bg-surface-container"
+                onClick={() => setState({ open: false, message: "" })}
+                type="button"
+              >
                 <X size={20} />
               </button>
             </div>
@@ -217,26 +282,41 @@ export function PropertyEditDialog({ property }: { property: Property }) {
 }
 
 /* ───────── Create Booking ───────── */
-export function BookingCreateDialog({ properties }: { properties: Property[] }) {
+export function BookingCreateDialog({
+  properties,
+  variant = "default",
+}: {
+  properties: Property[];
+  variant?: CreateDialogTrigger;
+}) {
   const formRef = useRef<HTMLFormElement>(null);
   const { isPending, state, setState, run } = useDialogAction();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => setMounted(true), 0);
-    return () => window.clearTimeout(timer);
-  }, []);
+  const mounted = useMounted();
 
   return (
     <>
-      <button
-        className="flex h-11 items-center gap-2 rounded-lg bg-primary-container px-4 text-sm font-semibold text-on-primary disabled:cursor-not-allowed disabled:opacity-60"
-        disabled={!mounted}
-        onClick={() => setState({ open: true, message: "" })}
-      >
-        <CalendarPlus size={17} />
-        New Booking
-      </button>
+      {variant === "icon" ? (
+        <button
+          aria-label="New Booking"
+          className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-container text-on-primary hover:bg-primary disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={!mounted}
+          onClick={() => setState({ open: true, message: "" })}
+          title="New Booking"
+          type="button"
+        >
+          <CalendarPlus size={18} />
+        </button>
+      ) : (
+        <button
+          className="flex h-11 items-center gap-2 rounded-lg bg-primary-container px-4 text-sm font-semibold text-on-primary disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={!mounted}
+          onClick={() => setState({ open: true, message: "" })}
+          type="button"
+        >
+          <CalendarPlus size={17} />
+          New Booking
+        </button>
+      )}
       {state.open ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-on-background/40 p-4 backdrop-blur-sm">
           <form
@@ -256,7 +336,12 @@ export function BookingCreateDialog({ properties }: { properties: Property[] }) 
                 <h2 className="font-heading text-2xl font-semibold text-primary">New Booking</h2>
                 <p className="text-sm text-on-surface-variant">Add a reservation and generate downstream ops.</p>
               </div>
-              <button className="rounded-full p-2 text-on-surface-variant hover:bg-surface-container" onClick={() => setState({ open: false, message: "" })} type="button">
+              <button
+                aria-label="Close New Booking"
+                className="rounded-full p-2 text-on-surface-variant hover:bg-surface-container"
+                onClick={() => setState({ open: false, message: "" })}
+                type="button"
+              >
                 <X size={20} />
               </button>
             </div>
@@ -268,6 +353,16 @@ export function BookingCreateDialog({ properties }: { properties: Property[] }) 
                   <option key={p.id} value={p.name}>{p.name}</option>
                 ))}
               </select>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-semibold text-on-surface-variant">Check-in</span>
+                  <input className="h-11 w-full rounded-lg border border-outline-variant px-4 text-sm" name="checkIn" type="date" />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-semibold text-on-surface-variant">Check-out</span>
+                  <input className="h-11 w-full rounded-lg border border-outline-variant px-4 text-sm" name="checkOut" type="date" />
+                </label>
+              </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <select className="h-11 rounded-lg border border-outline-variant px-3 text-sm" defaultValue="Direct" name="platform">
                   {(["Direct", "Airbnb", "VRBO", "Lease"] satisfies Booking["platform"][]).map((p) => (
@@ -415,6 +510,16 @@ export function BookingRowActions({ booking, properties }: { booking: Booking; p
                   <option key={p.id} value={p.name}>{p.name}</option>
                 ))}
               </select>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-semibold text-on-surface-variant">Check-in</span>
+                  <input className="h-11 w-full rounded-lg border border-outline-variant px-4 text-sm" defaultValue={bookingDatePart(booking.stayDates, 0)} name="checkIn" type="date" />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-semibold text-on-surface-variant">Check-out</span>
+                  <input className="h-11 w-full rounded-lg border border-outline-variant px-4 text-sm" defaultValue={bookingDatePart(booking.stayDates, 1)} name="checkOut" type="date" />
+                </label>
+              </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <select className="h-11 rounded-lg border border-outline-variant px-3 text-sm" defaultValue={booking.platform} name="platform">
                   {(["Direct", "Airbnb", "VRBO", "Lease"] satisfies Booking["platform"][]).map((p) => (

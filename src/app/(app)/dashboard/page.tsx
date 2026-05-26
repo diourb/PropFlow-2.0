@@ -2,7 +2,9 @@ import Link from "next/link";
 import {
   Banknote,
   Building2,
+  Calendar,
   CheckCircle2,
+  ClipboardList,
   Hammer,
   Home,
   TrendingUp,
@@ -12,6 +14,7 @@ import { RevenueChart } from "@/components/app/simple-chart";
 import { SectionCard } from "@/components/app/section-card";
 import { StatCard } from "@/components/app/stat-card";
 import { StatusPill } from "@/components/app/status-pill";
+import { EmptyState } from "@/components/app/empty-state";
 import { getOperationsSnapshot } from "@/lib/data/repository";
 
 const icons = [TrendingUp, Banknote, Home, CheckCircle2];
@@ -24,6 +27,32 @@ export default async function DashboardPage() {
     maintenanceRequests,
     properties,
   } = await getOperationsSnapshot();
+
+  if (properties.length === 0) {
+    return (
+      <>
+        <PageHeader
+          title="Welcome to PropFlow"
+          description="Get started by adding your first property to monitor portfolio performance."
+        />
+        <div className="mt-12">
+          <EmptyState
+            title="No properties found"
+            description="Your dashboard is empty because you haven't added any properties yet. Once you add properties, you'll see revenue, occupancy, and operations health here."
+            icon={Building2}
+            action={
+              <Link
+                className="flex h-11 items-center rounded-lg bg-secondary px-6 text-sm font-semibold text-on-secondary hover:bg-secondary-fixed"
+                href="/properties"
+              >
+                Add Your First Property
+              </Link>
+            }
+          />
+        </div>
+      </>
+    );
+  }
   const totalRevenue = properties.reduce((sum, property) => sum + property.revenueYtd, 0);
   const averageOccupancy = properties.length
     ? Math.round(properties.reduce((sum, property) => sum + property.occupancy, 0) / properties.length)
@@ -122,39 +151,47 @@ export default async function DashboardPage() {
           }
           title="Upcoming Check-ins"
         >
-          <div className="space-y-4">
-            {bookings.slice(0, 5).map((booking) => (
-              <Link
-                className="flex items-center justify-between gap-4 border-b border-outline-variant/20 pb-4 last:border-0 last:pb-0 hover:opacity-80"
-                href="/bookings"
-                key={booking.id}
-              >
-                <div className="flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-container-high font-heading font-semibold text-primary">
-                    {booking.guest
-                      .split(" ")
-                      .map((part) => part[0])
-                      .join("")
-                      .slice(0, 2)}
-                  </span>
-                  <div>
-                    <p className="text-sm font-semibold text-on-surface">
-                      {booking.guest}
-                    </p>
-                    <p className="text-sm text-on-surface-variant">
-                      {booking.property} - {booking.nights} nights
-                    </p>
+          {bookings.length > 0 ? (
+            <div className="space-y-4">
+              {bookings.slice(0, 5).map((booking) => (
+                <Link
+                  className="flex items-center justify-between gap-4 border-b border-outline-variant/20 pb-4 last:border-0 last:pb-0 hover:opacity-80"
+                  href="/bookings"
+                  key={booking.id}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-container-high font-heading font-semibold text-primary">
+                      {booking.guest
+                        .split(" ")
+                        .map((part) => part[0])
+                        .join("")
+                        .slice(0, 2)}
+                    </span>
+                    <div>
+                      <p className="text-sm font-semibold text-on-surface">
+                        {booking.guest}
+                      </p>
+                      <p className="text-sm text-on-surface-variant">
+                        {booking.property} - {booking.nights} nights
+                      </p>
+                    </div>
                   </div>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm font-semibold text-on-surface">
-                    {booking.stayDates}
-                  </p>
-                  <StatusPill tone="success">{booking.status}</StatusPill>
-                </div>
-              </Link>
-            ))}
-          </div>
+                  <div className="text-right">
+                    <p className="text-sm font-semibold text-on-surface">
+                      {booking.stayDates}
+                    </p>
+                    <StatusPill tone="success">{booking.status}</StatusPill>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              title="No upcoming bookings"
+              description="You don't have any bookings scheduled for the next few days."
+              icon={Calendar}
+            />
+          )}
         </SectionCard>
 
         <SectionCard
@@ -168,44 +205,52 @@ export default async function DashboardPage() {
           }
           title="Top Properties"
         >
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-outline-variant/30 text-xs uppercase text-on-surface-variant">
-                  <th className="py-3 font-semibold">Property</th>
-                  <th className="py-3 font-semibold">Revenue</th>
-                  <th className="py-3 font-semibold">Occupancy</th>
-                  <th className="py-3 text-right font-semibold">Trend</th>
-                </tr>
-              </thead>
-              <tbody>
-                {properties.slice(0, 5).map((property) => (
-                  <tr
-                    className="border-b border-outline-variant/10 last:border-0 hover:bg-surface-container-low"
-                    key={property.id}
-                  >
-                    <td className="py-4 font-semibold text-on-surface">
-                      <Link
-                        className="hover:text-primary hover:underline"
-                        href={`/properties/${property.id}`}
-                      >
-                        {property.name}
-                      </Link>
-                    </td>
-                    <td className="py-4 text-on-surface-variant">
-                      ${property.revenueYtd.toLocaleString()}
-                    </td>
-                    <td className="py-4 text-on-surface-variant">
-                      {property.occupancy}%
-                    </td>
-                    <td className="py-4 text-right text-secondary">
-                      <TrendingUp size={17} className="ml-auto" />
-                    </td>
+          {properties.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-outline-variant/30 text-xs uppercase text-on-surface-variant">
+                    <th className="py-3 font-semibold">Property</th>
+                    <th className="py-3 font-semibold">Revenue</th>
+                    <th className="py-3 font-semibold">Occupancy</th>
+                    <th className="py-3 text-right font-semibold">Trend</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {properties.slice(0, 5).map((property) => (
+                    <tr
+                      className="border-b border-outline-variant/10 last:border-0 hover:bg-surface-container-low"
+                      key={property.id}
+                    >
+                      <td className="py-4 font-semibold text-on-surface">
+                        <Link
+                          className="hover:text-primary hover:underline"
+                          href={`/properties/${property.id}`}
+                        >
+                          {property.name}
+                        </Link>
+                      </td>
+                      <td className="py-4 text-on-surface-variant">
+                        ${property.revenueYtd.toLocaleString()}
+                      </td>
+                      <td className="py-4 text-on-surface-variant">
+                        {property.occupancy}%
+                      </td>
+                      <td className="py-4 text-right text-secondary">
+                        <TrendingUp size={17} className="ml-auto" />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <EmptyState
+              title="No property data"
+              description="Add properties and start tracking bookings to see performance data here."
+              icon={ClipboardList}
+            />
+          )}
         </SectionCard>
       </div>
     </>

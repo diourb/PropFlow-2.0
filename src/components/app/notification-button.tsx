@@ -50,6 +50,7 @@ export function NotificationButton({ notifications }: { notifications: Notificat
         aria-label="Notifications"
         className="relative flex h-10 w-10 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-high"
         onClick={() => setOpen((prev) => !prev)}
+        title="Notifications"
       >
         <Bell size={20} />
         {unread.length > 0 ? (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Clock,
   Home,
+  ImagePlus,
   MapPin,
   Navigation,
   PauseCircle,
@@ -16,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { createCleaningTask, submitIssueReport, updateCleaningChecklistItem, updateCleaningStatus } from "@/app/actions";
+import { EmptyState } from "@/components/app/empty-state";
 import type { ChecklistItem, CleaningTask, Property } from "@/lib/types";
 
 export function CleaningWorkspace({
@@ -35,24 +37,48 @@ export function CleaningWorkspace({
     checklistItems.filter((item) => item.completed).map((item) => item.id),
   );
   const [activeTab, setActiveTab] = useState<"pending" | "completed">("pending");
+  const [activeTaskId, setActiveTaskId] = useState(
+    tasks.find((task) => task.status !== "completed")?.id ?? tasks[0]?.id ?? "",
+  );
   const [issueOpen, setIssueOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
+  const [completionPhoto, setCompletionPhoto] = useState<File | null>(null);
+  const [completionPreview, setCompletionPreview] = useState<string | null>(null);
+  const [photoUploading, setPhotoUploading] = useState(false);
   const [message, setMessage] = useState("");
   const [mounted, setMounted] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [isSubmittingIssue, startIssueTransition] = useTransition();
   const [isUpdatingStatus, startStatusTransition] = useTransition();
   const [isCreating, startCreateTransition] = useTransition();
+  const completionInputRef = useRef<HTMLInputElement>(null);
 
-  const allTasks = tasks.map((t) => ({ ...t, status: taskStatuses[t.id] ?? t.status }));
-  const pendingTasks = allTasks.filter((t) => t.status !== "completed");
-  const completedTasks = allTasks.filter((t) => t.status === "completed");
-  const visibleTasks = activeTab === "pending" ? pendingTasks : completedTasks;
-  const task = visibleTasks[0] ?? allTasks[0];
+  const allTasks = useMemo(
+    () => tasks.map((t) => ({ ...t, status: taskStatuses[t.id] ?? t.status })),
+    [tasks, taskStatuses],
+  );
+  const pendingTasks = useMemo(
+    () => allTasks.filter((t) => t.status !== "completed"),
+    [allTasks],
+  );
+  const completedTasks = useMemo(
+    () => allTasks.filter((t) => t.status === "completed"),
+    [allTasks],
+  );
+  const visibleTasks = useMemo(
+    () => (activeTab === "pending" ? pendingTasks : completedTasks),
+    [activeTab, completedTasks, pendingTasks],
+  );
+  const task = visibleTasks.find((item) => item.id === activeTaskId) ?? visibleTasks[0] ?? allTasks[0];
   const taskStatus = task ? (taskStatuses[task.id] ?? task.status) : "pending";
-  const allItemsChecked = checklistItems.length > 0 && checked.length === checklistItems.length;
+  const taskItems = useMemo(
+    () => checklistItems.filter((item) => item.cleaningTaskId === task?.id),
+    [checklistItems, task?.id],
+  );
+  const checkedTaskItems = taskItems.filter((item) => checked.includes(item.id));
+  const allItemsChecked = taskItems.length > 0 && checkedTaskItems.length === taskItems.length;
 
   useEffect(() => {
     const timer = window.setTimeout(() => setMounted(true), 0);
@@ -61,11 +87,11 @@ export function CleaningWorkspace({
 
   const grouped = useMemo(
     () =>
-      checklistItems.reduce<Record<string, ChecklistItem[]>>((acc, item) => {
+      taskItems.reduce<Record<string, ChecklistItem[]>>((acc, item) => {
         acc[item.room] = acc[item.room] ? [...acc[item.room], item] : [item];
         return acc;
       }, {}),
-    [checklistItems],
+    [taskItems],
   );
 
   function updateStatus(id: string, status: CleaningTask["status"]) {
@@ -80,19 +106,21 @@ export function CleaningWorkspace({
 
   if (!task) {
     return (
-      <div className="rounded-xl border border-dashed border-outline-variant bg-surface-container-lowest p-10 text-center ambient-shadow">
-        <Home className="mx-auto mb-4 text-outline" size={40} />
-        <h1 className="font-heading text-3xl font-semibold text-primary">No Cleaning Tasks</h1>
-        <p className="mt-2 text-sm text-on-surface-variant">
-          New short-term bookings will generate turnover work automatically.
-        </p>
-        <button
-          className="mt-6 h-11 rounded-lg bg-primary-container px-5 text-sm font-semibold text-on-primary"
-          onClick={() => setCreateOpen(true)}
-          type="button"
-        >
-          Add Cleaning Task
-        </button>
+      <div className="mt-8">
+        <EmptyState
+          title="No Cleaning Tasks"
+          description="New short-term bookings will generate turnover work automatically. You can also manually add a task."
+          icon={Home}
+          action={
+            <button
+              className="h-11 rounded-lg bg-primary-container px-6 text-sm font-semibold text-on-primary"
+              onClick={() => setCreateOpen(true)}
+              type="button"
+            >
+              Add Your First Task
+            </button>
+          }
+        />
         <CleaningCreateModal
           isPending={isCreating}
           onClose={() => setCreateOpen(false)}
@@ -187,6 +215,29 @@ export function CleaningWorkspace({
         </div>
       ) : (
         <>
+          {visibleTasks.length > 1 ? (
+            <div className="mb-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {visibleTasks.map((item) => (
+                <button
+                  className={`rounded-lg border p-4 text-left transition ${
+                    item.id === task.id
+                      ? "border-secondary bg-secondary/10"
+                      : "border-outline-variant/40 bg-surface-container-lowest hover:border-secondary/40"
+                  }`}
+                  key={item.id}
+                  onClick={() => setActiveTaskId(item.id)}
+                  type="button"
+                >
+                  <span className="block truncate text-sm font-semibold text-primary">{item.property}</span>
+                  <span className="mt-1 block truncate text-xs text-on-surface-variant">{item.type}</span>
+                  <span className="mt-2 block text-xs font-semibold text-secondary">
+                    {item.completed}/{item.total} items · Check-in {item.checkIn}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+
           {/* Task card */}
           <section className="mb-6 overflow-hidden rounded-xl border border-outline-variant/30 bg-surface-container-lowest ambient-shadow">
             <div
@@ -202,7 +253,7 @@ export function CleaningWorkspace({
                   In Progress
                 </span>
               ) : taskStatus === "completed" ? (
-                <span className="absolute right-4 top-4 inline-flex items-center gap-1 rounded-full bg-success px-3 py-1 text-xs font-semibold text-white shadow-sm">
+                <span className="absolute right-4 top-4 inline-flex items-center gap-1 rounded-full bg-secondary px-3 py-1 text-xs font-semibold text-on-secondary shadow-sm">
                   <CheckCircle2 size={13} />
                   Guest Ready
                 </span>
@@ -239,12 +290,31 @@ export function CleaningWorkspace({
                 )}
                 {taskStatus === "in_progress" && allItemsChecked ? (
                   <button
-                    className="flex h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-secondary text-sm font-semibold text-on-secondary hover:bg-secondary-fixed"
-                    disabled={isUpdatingStatus}
-                    onClick={() => updateStatus(task.id, "completed")}
+                    className="flex h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-secondary text-sm font-semibold text-on-secondary hover:bg-secondary-fixed disabled:opacity-60"
+                    disabled={isUpdatingStatus || photoUploading}
+                    onClick={async () => {
+                      if (completionPhoto) {
+                        setPhotoUploading(true);
+                        const fd = new FormData();
+                        fd.set("file", completionPhoto);
+                        fd.set("taskId", task.id);
+                        try {
+                          await fetch("/api/storage/cleaning", { method: "POST", body: fd });
+                        } catch {
+                          // Photo upload failure does not block marking complete
+                        } finally {
+                          setPhotoUploading(false);
+                        }
+                      }
+                      updateStatus(task.id, "completed");
+                    }}
                   >
-                    <Sparkles size={18} />
-                    Mark Guest Ready
+                    {photoUploading ? (
+                      <span className="animate-spin">⏳</span>
+                    ) : (
+                      <Sparkles size={18} />
+                    )}
+                    {photoUploading ? "Uploading…" : "Mark Guest Ready"}
                   </button>
                 ) : null}
                 <button
@@ -255,7 +325,54 @@ export function CleaningWorkspace({
                   <Navigation size={18} />
                 </button>
               </div>
-              {taskStatus === "in_progress" && !allItemsChecked && checklistItems.length > 0 ? (
+              {taskStatus === "in_progress" && allItemsChecked ? (
+                <div className="mt-4 rounded-lg border border-dashed border-outline-variant bg-surface-container-low p-4">
+                  <p className="mb-2 text-xs font-semibold text-on-surface-variant">
+                    Completion Photo <span className="font-normal">(optional — attach a photo showing the property is guest-ready)</span>
+                  </p>
+                  {completionPreview ? (
+                    <div className="relative mb-3">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        alt="Completion preview"
+                        className="h-32 w-full rounded-lg object-cover"
+                        src={completionPreview}
+                      />
+                      <button
+                        aria-label="Remove photo"
+                        className="absolute right-2 top-2 rounded-full bg-on-background/60 p-1 text-white hover:bg-on-background/80"
+                        onClick={() => { setCompletionPhoto(null); setCompletionPreview(null); }}
+                        type="button"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ) : null}
+                  <button
+                    className="flex items-center gap-2 rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2 text-xs font-semibold hover:bg-surface-container-high"
+                    onClick={() => completionInputRef.current?.click()}
+                    type="button"
+                  >
+                    <ImagePlus size={15} />
+                    {completionPhoto ? "Replace Photo" : "Attach Completion Photo"}
+                  </button>
+                  <input
+                    accept="image/*"
+                    className="sr-only"
+                    ref={completionInputRef}
+                    type="file"
+                    onChange={(e) => {
+                      const file = e.currentTarget.files?.[0];
+                      if (file) {
+                        setCompletionPhoto(file);
+                        setCompletionPreview(URL.createObjectURL(file));
+                      }
+                      e.currentTarget.value = "";
+                    }}
+                  />
+                </div>
+              ) : null}
+              {taskStatus === "in_progress" && !allItemsChecked && taskItems.length > 0 ? (
                 <p className="mt-3 text-xs text-on-surface-variant">
                   Complete all checklist items to unlock &quot;Mark Guest Ready&quot;.
                 </p>
@@ -268,7 +385,7 @@ export function CleaningWorkspace({
             <div className="mb-5 flex items-end justify-between">
               <h2 className="font-heading text-xl font-semibold text-primary">Task Checklist</h2>
               <span className="text-xs font-bold text-secondary">
-                {checked.length} / {checklistItems.length} Completed
+                {checkedTaskItems.length} / {taskItems.length} Completed
               </span>
             </div>
             <div className="space-y-6">

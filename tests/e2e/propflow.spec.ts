@@ -6,7 +6,7 @@ async function gotoApp(page: Page, path: string) {
 
 test("public onboarding path is reachable", async ({ page }) => {
   await gotoApp(page, "/");
-  await expect(page.getByRole("heading", { name: /manage your portfolio/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /manage your rental portfolio/i })).toBeVisible();
   await page.getByRole("link", { name: /get started/i }).first().click();
   await expect(page).toHaveURL(/\/workspace/);
 });
@@ -27,7 +27,7 @@ test("dashboard and operational routes render seeded data", async ({ page }) => 
 test("demo login routes personas into dedicated portals", async ({ page }) => {
   await gotoApp(page, "/login");
   await page.getByLabel("Demo persona").selectOption("cleaner");
-  await page.getByRole("button", { name: "Log In" }).click();
+  await page.getByRole("button", { name: "Sign In" }).click();
   await expect(page).toHaveURL(/\/field\/cleaning/);
   await expect(page.getByRole("heading", { name: /today's tasks/i })).toBeVisible();
 
@@ -37,7 +37,7 @@ test("demo login routes personas into dedicated portals", async ({ page }) => {
 
 test("manager can create property and booking in demo mode", async ({ page }) => {
   await gotoApp(page, "/properties");
-  await page.getByRole("button", { name: /add property/i }).last().click();
+  await page.getByRole("button", { name: /add property/i }).filter({ hasText: "Add Property" }).last().click();
   await page.getByPlaceholder("Property name").fill("Playwright Harbor House");
   await page.getByPlaceholder("Address").fill("10 Harbor Way, Miami, FL");
   await page.getByPlaceholder("Owner name").fill("QA Owner");
@@ -45,10 +45,49 @@ test("manager can create property and booking in demo mode", async ({ page }) =>
   await expect(page.getByText("Property added.")).toBeVisible();
 
   await gotoApp(page, "/bookings");
-  await page.getByRole("button", { name: /new booking/i }).click();
+  await page.getByRole("button", { name: /new booking/i }).filter({ hasText: "New Booking" }).click();
   await page.getByPlaceholder("Guest or tenant name").fill("Playwright Guest");
   await page.getByPlaceholder("Email").fill("playwright@example.com");
   await page.getByPlaceholder("Amount").fill("1250");
+  await page.getByRole("button", { name: /create booking/i }).click();
+  await expect(page.getByText("Booking created.")).toBeVisible();
+});
+
+test("global search opens matching property details", async ({ page }, testInfo) => {
+  await gotoApp(page, "/dashboard");
+
+  if (testInfo.project.name === "mobile") {
+    await page.getByRole("button", { name: "Open navigation menu" }).click();
+    await page.getByPlaceholder("Search workspace").fill("Oakwood");
+    await page.getByRole("button", { name: /oakwood estate/i }).click();
+  } else {
+    await expect(page.getByRole("button", { name: "Add Property" }).first()).toBeEnabled();
+    const searchInput = page.getByPlaceholder("Search properties, guests, reports...");
+    await searchInput.click();
+    await searchInput.fill("Oakwood");
+    await page.getByRole("link", { name: /oakwood estate property/i }).click();
+  }
+
+  await expect(page).toHaveURL(/\/properties\/oakwood-estate/);
+  await expect(page.getByRole("heading", { name: "Oakwood Estate" })).toBeVisible();
+});
+
+test("mobile header supports property and booking creation", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await gotoApp(page, "/dashboard");
+
+  await page.getByRole("button", { name: "Add Property" }).click();
+  await page.getByPlaceholder("Property name").fill("Mobile Harbor Suite");
+  await page.getByPlaceholder("Address").fill("28 Bay Street, Kingston");
+  await page.getByPlaceholder("Owner name").fill("Mobile Owner");
+  await page.getByRole("button", { name: /create property/i }).click();
+  await expect(page.getByText("Property added.")).toBeVisible();
+  await page.getByRole("button", { name: "Close Add Property" }).click();
+
+  await page.getByRole("button", { name: "New Booking" }).click();
+  await page.getByPlaceholder("Guest or tenant name").fill("Mobile Booking Guest");
+  await page.getByPlaceholder("Email").fill("mobile.booking@example.com");
+  await page.getByPlaceholder("Amount").fill("980");
   await page.getByRole("button", { name: /create booking/i }).click();
   await expect(page.getByText("Booking created.")).toBeVisible();
 });
@@ -122,4 +161,60 @@ test("csv export route returns downloadable data", async ({ request }) => {
   const response = await request.get("/api/exports/csv");
   expect(response.ok()).toBeTruthy();
   expect(await response.text()).toContain("property,Villa Azure");
+});
+
+test("pricing page shows plan cards and PayPal CTA or not-configured state", async ({ page }) => {
+  await gotoApp(page, "/pricing");
+  await expect(page.getByRole("heading", { name: /simple.*transparent.*pricing/i })).toBeVisible();
+  // All three plan cards should render
+  await expect(page.getByRole("heading", { name: "Starter" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Professional" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Enterprise" })).toBeVisible();
+  // CTA controls exist (either PayPal checkout button or workspace setup link)
+  await expect(page.getByText(/start.*trial|start workspace setup/i).first()).toBeVisible();
+});
+
+test("property detail page renders tabs for bookings, cleaning, maintenance", async ({ page }) => {
+  // Navigate directly to the first property's detail with each tab
+  await gotoApp(page, "/properties");
+  await expect(page.getByRole("heading", { name: "Properties" })).toBeVisible();
+
+  // Get the href from the first Villa Azure link
+  const firstPropertyLink = page.getByRole("link", { name: /villa azure/i }).first();
+  const href = await firstPropertyLink.getAttribute("href");
+  const propertyId = href?.split("/properties/")[1]?.split("?")[0] ?? "";
+
+  // Navigate to bookings tab
+  await gotoApp(page, `/properties/${propertyId}?tab=bookings`);
+  await expect(page.getByRole("heading", { name: /bookings/i })).toBeVisible();
+
+  // Navigate to cleaning tab
+  await gotoApp(page, `/properties/${propertyId}?tab=cleaning`);
+  await expect(page.getByRole("heading", { name: /cleaning tasks/i })).toBeVisible();
+
+  // Navigate to maintenance tab
+  await gotoApp(page, `/properties/${propertyId}?tab=maintenance`);
+  await expect(page.getByRole("heading", { name: /maintenance requests/i })).toBeVisible();
+});
+
+test("reports page shows statements table and CSV download link", async ({ page }) => {
+  await gotoApp(page, "/reports");
+  await expect(page.getByRole("heading", { name: "Reports Overview" })).toBeVisible();
+
+  // CSV export link
+  await expect(page.getByRole("link", { name: /export csv/i })).toBeVisible();
+
+  // PDF export button
+  await expect(page.getByRole("button", { name: /export pdf/i })).toBeVisible();
+
+  // Owner statements section
+  await expect(page.getByRole("heading", { name: /owner statements/i })).toBeVisible();
+});
+
+test("integrations tab shows connect buttons or credentials-not-configured state", async ({ page }) => {
+  await gotoApp(page, "/settings/workspace?tab=integrations");
+  await expect(page.getByRole("heading", { name: /credential-gated integrations/i })).toBeVisible();
+
+  // In demo mode: should show the "OAuth integrations require Supabase" message
+  await expect(page.getByText(/oauth integrations require supabase/i)).toBeVisible();
 });

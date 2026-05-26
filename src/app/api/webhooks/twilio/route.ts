@@ -44,9 +44,26 @@ export async function POST(request: Request) {
 
   const supabase = getServiceSupabase();
   if (supabase) {
+    // Find the workspace associated with the Twilio number if configured
+    const toNumber = params.To ?? process.env.TWILIO_FROM_NUMBER ?? "";
+    let workspaceId: string | null = null;
+
+    if (toNumber) {
+      // Look up workspace via notification_preferences or use first active workspace as fallback
+      const { data: pref } = await supabase
+        .from("notification_preferences")
+        .select("workspace_id")
+        .eq("channel", "sms")
+        .eq("enabled", true)
+        .limit(1)
+        .maybeSingle();
+      workspaceId = pref?.workspace_id ?? null;
+    }
+
     await supabase.from("notifications").insert({
+      workspace_id: workspaceId,
       channel: "sms",
-      title: "Inbound SMS",
+      title: `Inbound SMS from ${from}`,
       body,
       metadata: { messageSid, from },
     });

@@ -6,6 +6,7 @@ import { Download, MessageCircle, Pencil, Plus, Search, Trash2, UserPlus, X } fr
 import { createGuest, deleteGuest, updateGuest } from "@/app/actions";
 import { ConfirmDialog } from "@/components/app/confirm-dialog";
 import { StatusPill } from "@/components/app/status-pill";
+import { EmptyState } from "@/components/app/empty-state";
 import type { Guest } from "@/lib/types";
 
 function GuestForm({
@@ -202,8 +203,29 @@ export function GuestsManager({ initialGuests }: { initialGuests: Guest[] }) {
             <tbody className="divide-y divide-outline-variant">
               {filtered.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-8 text-center text-sm text-on-surface-variant" colSpan={7}>
-                    {query || statusFilter ? "No guests match the current filters." : "No guests yet. Add your first guest."}
+                  <td className="px-4 py-8" colSpan={7}>
+                    <EmptyState
+                      title={query || statusFilter ? "No guests match" : "No guests yet"}
+                      description={query || statusFilter ? "Try adjusting your filters or search terms." : "Add your first guest to start building your property CRM."}
+                      icon={query || statusFilter ? Search : UserPlus}
+                      action={
+                        query || statusFilter ? (
+                          <button
+                            className="h-11 rounded-lg border border-outline-variant px-6 text-sm font-semibold"
+                            onClick={() => { setQuery(""); setStatusFilter(""); }}
+                          >
+                            Clear Filters
+                          </button>
+                        ) : (
+                          <button
+                            className="h-11 rounded-lg bg-primary-container px-6 text-sm font-semibold text-on-primary"
+                            onClick={() => setCreateOpen(true)}
+                          >
+                            Add First Guest
+                          </button>
+                        )
+                      }
+                    />
                   </td>
                 </tr>
               ) : (

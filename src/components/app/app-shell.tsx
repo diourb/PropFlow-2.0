@@ -13,7 +13,8 @@ import { getOperationsSnapshot } from "@/lib/data/repository";
 import { MobileNav } from "@/components/app/mobile-nav";
 import { NavLinks } from "@/components/app/nav-links";
 import { NotificationButton } from "@/components/app/notification-button";
-import { SearchBar } from "@/components/app/search-bar";
+import { SearchBar, type SearchItem } from "@/components/app/search-bar";
+import { BookingCreateDialog, PropertyCreateDialog } from "@/components/workflows/operation-dialogs";
 import type { Role } from "@/lib/types";
 import type { NavIconName } from "@/components/app/nav-links";
 
@@ -53,11 +54,63 @@ const demoRoles: Array<[Role, string]> = [
 ];
 
 export async function AppShell({ children }: { children: React.ReactNode }) {
-  const { session, notifications } = await getOperationsSnapshot();
+  const {
+    session,
+    notifications,
+    properties,
+    bookings,
+    guests,
+    owners,
+    maintenanceRequests,
+  } = await getOperationsSnapshot();
   const avatar = session.user.avatar ?? "/icon.svg";
   const visibleNav = navItems.filter((item) => item.roles.includes(session.role));
   const canAddProperty = ["platform_admin", "workspace_admin", "manager"].includes(session.role);
   const canCreateReport = ["platform_admin", "workspace_admin", "manager", "owner"].includes(session.role);
+  const searchItems: SearchItem[] = [
+    ...visibleNav.map((item) => ({
+      title: item.label,
+      subtitle: "Go to workspace route",
+      href: item.href,
+      category: "Route",
+    })),
+    ...properties.map((property) => ({
+      title: property.name,
+      subtitle: `${property.location} - ${property.owner}`,
+      href: `/properties/${property.id}`,
+      category: "Property",
+    })),
+    ...bookings.map((booking) => ({
+      title: booking.guest,
+      subtitle: `${booking.property} - ${booking.stayDates}`,
+      href: `/bookings?q=${encodeURIComponent(booking.guest)}`,
+      category: "Booking",
+    })),
+    ...guests.map((guest) => ({
+      title: guest.name,
+      subtitle: `${guest.email} - ${guest.status}`,
+      href: "/guests",
+      category: "Guest",
+    })),
+    ...owners.map((owner) => ({
+      title: owner.name,
+      subtitle: `${owner.email || "Owner profile"} - ${owner.properties.length} properties`,
+      href: "/owners",
+      category: "Owner",
+    })),
+    ...maintenanceRequests.map((request) => ({
+      title: request.title,
+      subtitle: `${request.property} - ${request.status.replace("_", " ")}`,
+      href: "/maintenance",
+      category: "Work",
+    })),
+    {
+      title: "Owner statements",
+      subtitle: "Financial reporting and exports",
+      href: "/reports",
+      category: "Report",
+    },
+  ];
 
   return (
     <div className="min-h-screen bg-background text-on-surface">
@@ -116,11 +169,12 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-3">
             <MobileNav
               items={visibleNav}
+              searchItems={searchItems}
               workspaceName="PropFlow"
               userAvatar={avatar}
               userName={session.user.name}
             />
-            <SearchBar />
+            <SearchBar items={searchItems} />
             <div className="md:hidden">
               <span className="font-heading text-xl font-bold text-primary">
                 PropFlow
@@ -130,24 +184,30 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
 
           <div className="flex items-center gap-2 md:gap-4">
             {canAddProperty ? (
-              <Link
-                className="hidden h-10 items-center gap-2 rounded-lg bg-primary-container px-4 text-sm font-semibold text-on-primary transition hover:bg-primary md:flex"
-                href="/properties"
-              >
-                <Plus size={17} />
-                Add Property
-              </Link>
+              <>
+                <div className="hidden md:block">
+                  <PropertyCreateDialog />
+                </div>
+                <div className="flex items-center gap-2 md:hidden">
+                  <PropertyCreateDialog variant="icon" />
+                  <BookingCreateDialog properties={properties} variant="icon" />
+                </div>
+              </>
             ) : null}
             <NotificationButton notifications={notifications} />
             <Link
+              aria-label="Account Settings"
               className="flex h-10 w-10 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-high"
               href="/settings/account"
+              title="Account Settings"
             >
               <Settings size={20} />
             </Link>
             <Link
+              aria-label="My Profile"
               className="hidden items-center gap-3 rounded-full border border-outline-variant bg-surface-container-lowest py-1 pl-1 pr-3 md:flex"
               href="/settings/account"
+              title="My Profile"
             >
               <Image
                 alt={session.user.name}

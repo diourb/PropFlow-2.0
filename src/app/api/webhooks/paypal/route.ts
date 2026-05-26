@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/admin";
 
-async function verifyPayPalWebhook(request: Request, rawBody: string): Promise<boolean> {
+async function verifyPayPalWebhook(
+  request: Request,
+  webhookEvent: Record<string, unknown>,
+): Promise<boolean> {
   const webhookId = process.env.PAYPAL_WEBHOOK_ID;
-  // Verification is skipped until PAYPAL_WEBHOOK_ID is set in env
-  if (!webhookId) return true;
+  if (!webhookId) return process.env.NODE_ENV !== "production";
 
   const transmissionId = request.headers.get("paypal-transmission-id");
   const timestamp = request.headers.get("paypal-transmission-time");
@@ -55,7 +57,7 @@ async function verifyPayPalWebhook(request: Request, rawBody: string): Promise<b
       transmission_sig: transmissionSig,
       transmission_time: timestamp,
       webhook_id: webhookId,
-      webhook_event: JSON.parse(rawBody) as unknown,
+      webhook_event: webhookEvent,
     }),
   });
 
@@ -64,10 +66,23 @@ async function verifyPayPalWebhook(request: Request, rawBody: string): Promise<b
   return verification_status === "SUCCESS";
 }
 
+function planSlugFromPayPalPlanId(paypalPlanId: string): string {
+  if (paypalPlanId === process.env.PAYPAL_PLAN_ID_STARTER) return "starter";
+  if (paypalPlanId === process.env.PAYPAL_PLAN_ID_ENTERPRISE) return "enterprise";
+  return "professional";
+}
+
 export async function POST(request: Request) {
   const rawBody = await request.text();
+  let payload: Record<string, unknown>;
 
-  const verified = await verifyPayPalWebhook(request, rawBody);
+  try {
+    payload = JSON.parse(rawBody) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ error: "Malformed PayPal webhook payload." }, { status: 400 });
+  }
+
+  const verified = await verifyPayPalWebhook(request, payload);
   if (!verified) {
     return NextResponse.json(
       { error: "Webhook signature verification failed." },
@@ -75,7 +90,6 @@ export async function POST(request: Request) {
     );
   }
 
-  const payload = JSON.parse(rawBody) as Record<string, unknown>;
   const eventType = payload.event_type as string | undefined;
   const resource = (payload.resource ?? {}) as Record<string, unknown>;
 
@@ -89,10 +103,20 @@ export async function POST(request: Request) {
     });
 
     if (eventType?.startsWith("BILLING.SUBSCRIPTION")) {
+      // Upsert subscription row
+      const subscriptionId = String(resource.id ?? "");
+      const customId = String(resource.custom_id ?? "");
+      const planId = String(
+        (resource.plan_id as string | undefined) ?? "",
+      );
+      const planSlug = planId ? planSlugFromPayPalPlanId(planId) : "professional";
+
       await supabase.from("subscriptions").upsert(
         {
           external_provider: "paypal",
-          external_id: resource.id,
+          external_id: subscriptionId,
+          workspace_id: customId || null,
+          plan_slug: planSlug,
           status:
             (resource.status as string | undefined)?.toLowerCase() ?? "unknown",
           current_period_end:
@@ -102,6 +126,29 @@ export async function POST(request: Request) {
         },
         { onConflict: "external_provider,external_id" },
       );
+
+      // Update workspace status based on event type
+      const workspaceId = customId;
+      if (workspaceId) {
+        if (
+          eventType === "BILLING.SUBSCRIPTION.ACTIVATED" ||
+          eventType === "BILLING.SUBSCRIPTION.RENEWED"
+        ) {
+          await supabase
+            .from("workspaces")
+            .update({ status: "active", plan_slug: planSlug })
+            .eq("id", workspaceId);
+        } else if (
+          eventType === "BILLING.SUBSCRIPTION.CANCELLED" ||
+          eventType === "BILLING.SUBSCRIPTION.SUSPENDED" ||
+          eventType === "BILLING.SUBSCRIPTION.PAYMENT.FAILED"
+        ) {
+          await supabase
+            .from("workspaces")
+            .update({ status: "past_due" })
+            .eq("id", workspaceId);
+        }
+      }
     }
   }
 

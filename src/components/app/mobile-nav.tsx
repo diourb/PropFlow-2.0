@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   BarChart3,
   Bell,
@@ -13,6 +13,7 @@ import {
   Home,
   KeyRound,
   Menu,
+  Search,
   Shield,
   SprayCan,
   Users,
@@ -20,6 +21,7 @@ import {
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { NavIconName } from "@/components/app/nav-links";
+import type { SearchItem } from "@/components/app/search-bar";
 
 const navIcons = {
   bell: Bell,
@@ -43,18 +45,33 @@ type NavItem = {
 
 type MobileNavProps = {
   items: NavItem[];
+  searchItems: SearchItem[];
   workspaceName: string;
   userAvatar: string;
   userName: string;
 };
 
-export function MobileNav({ items, workspaceName, userAvatar, userName }: MobileNavProps) {
+export function MobileNav({ items, searchItems, workspaceName, userAvatar, userName }: MobileNavProps) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const pathname = usePathname();
+  const router = useRouter();
+  const q = query.trim().toLowerCase();
+  const searchMatches = (q
+    ? searchItems.filter((item) =>
+        [item.title, item.subtitle, item.category].join(" ").toLowerCase().includes(q),
+      )
+    : searchItems
+  ).slice(0, 5);
 
   function close() {
     setOpen(false);
-    document.body.style.overflow = "";
+    setQuery("");
+  }
+
+  function goTo(href: string) {
+    router.push(href);
+    close();
   }
 
   useEffect(() => {
@@ -99,6 +116,7 @@ export function MobileNav({ items, workspaceName, userAvatar, userName }: Mobile
                 aria-label="Close menu"
                 className="flex h-8 w-8 items-center justify-center rounded-full text-on-primary/70 hover:bg-on-primary-fixed-variant/20"
                 onClick={close}
+                title="Close menu"
               >
                 <X size={20} />
               </button>
@@ -115,6 +133,54 @@ export function MobileNav({ items, workspaceName, userAvatar, userName }: Mobile
               />
               <span className="text-sm font-semibold text-on-primary">{userName}</span>
             </div>
+
+            <form
+              className="mx-4 mt-4 rounded-xl border border-white/10 bg-white/10 p-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const fallbackHref = q ? `/properties?q=${encodeURIComponent(query.trim())}` : "/dashboard";
+                goTo(searchMatches[0]?.href ?? fallbackHref);
+              }}
+            >
+              <label className="flex h-10 items-center gap-2 rounded-lg bg-white/10 px-3 text-on-primary">
+                <Search size={17} className="text-on-primary/70" />
+                <input
+                  className="w-full border-0 bg-transparent text-sm outline-none placeholder:text-on-primary/50"
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search workspace"
+                  value={query}
+                />
+              </label>
+              {query ? (
+                <div className="mt-2 space-y-1">
+                  {searchMatches.length === 0 ? (
+                    <button
+                      className="w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-on-primary/70 hover:bg-white/10"
+                      type="submit"
+                    >
+                      Search properties for &quot;{query.trim()}&quot;
+                    </button>
+                  ) : (
+                    searchMatches.map((item) => (
+                      <Link
+                        className="block w-full rounded-lg px-3 py-2 text-left hover:bg-white/10"
+                        href={item.href}
+                        key={`${item.category}-${item.href}-${item.title}`}
+                        onClick={close}
+                        role="button"
+                      >
+                        <span className="block truncate text-sm font-semibold text-on-primary">
+                          {item.title}
+                        </span>
+                        <span className="block truncate text-xs text-on-primary/60">
+                          {item.category} - {item.subtitle}
+                        </span>
+                      </Link>
+                    ))
+                  )}
+                </div>
+              ) : null}
+            </form>
 
             <nav className="flex-1 overflow-y-auto px-2 pt-4">
               {items.map((item) => {

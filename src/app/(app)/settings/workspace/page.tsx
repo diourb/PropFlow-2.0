@@ -7,10 +7,12 @@ import { StatusPill } from "@/components/app/status-pill";
 import { InviteMemberDialog } from "@/components/workflows/settings-actions";
 import {
   GeneralSettingsForm,
+  IntegrationActions,
   TeamMemberActionsMenu,
   WorkspaceNotificationsTab,
 } from "@/components/workflows/workspace-settings-client";
 import { getOperationsSnapshot } from "@/lib/data/repository";
+import { hasSupabaseEnv } from "@/lib/supabase/env";
 
 const tabs = [
   { id: "general", label: "General" },
@@ -27,6 +29,7 @@ export default async function WorkspaceSettingsPage({
 }) {
   const { tab = "team" } = await searchParams;
   const { integrations, teamMembers, session } = await getOperationsSnapshot();
+  const supabaseEnabled = hasSupabaseEnv();
   const { workspace } = session;
 
   return (
@@ -129,11 +132,18 @@ export default async function WorkspaceSettingsPage({
         <div className="grid gap-8 xl:grid-cols-3">
           <div className="xl:col-span-2">
             <SectionCard title="Credential-Gated Integrations">
+              {!supabaseEnabled ? (
+                <p className="mb-4 rounded-lg border border-outline-variant bg-surface-container-low p-3 text-sm text-on-surface-variant">
+                  OAuth integrations require Supabase configuration. Demo mode shows integration status only.
+                </p>
+              ) : null}
               <div className="grid gap-4 md:grid-cols-2">
                 {integrations.map((integration) => (
                   <div className="rounded-lg border border-outline-variant/40 bg-surface p-4" key={integration.id}>
                     <div className="mb-3 flex items-start justify-between gap-3">
-                      <h3 className="font-semibold text-primary">{integration.name}</h3>
+                      <h3 className="font-semibold text-primary capitalize">
+                        {integration.name.replace(/_/g, " ")}
+                      </h3>
                       <StatusPill
                         tone={
                           integration.status === "connected" ? "success"
@@ -146,6 +156,10 @@ export default async function WorkspaceSettingsPage({
                     </div>
                     <p className="text-sm leading-6 text-on-surface-variant">{integration.description}</p>
                     <p className="mt-3 text-xs font-semibold text-outline">{integration.lastSync}</p>
+                    <IntegrationActions
+                      hasSupabase={supabaseEnabled}
+                      integration={integration}
+                    />
                   </div>
                 ))}
               </div>
@@ -174,7 +188,7 @@ export default async function WorkspaceSettingsPage({
               </div>
               <div className="flex justify-between">
                 <span>Next Invoice</span>
-                <span>Pending PayPal setup</span>
+                <span>Awaiting billing setup</span>
               </div>
             </div>
             <Link
@@ -191,7 +205,7 @@ export default async function WorkspaceSettingsPage({
                 <span className="flex h-9 w-12 items-center justify-center rounded border border-outline-variant/40 bg-white text-xs font-bold text-primary">PP</span>
                 <div>
                   <p className="font-semibold">PayPal billing</p>
-                  <p className="text-xs text-on-surface-variant">Add PayPal credentials in your .env to activate</p>
+                  <p className="text-xs text-on-surface-variant">Setup required for automated billing</p>
                 </div>
               </div>
               <CreditCard className="text-secondary" size={20} />
@@ -239,7 +253,7 @@ function BillingSidebar({ workspace }: { workspace: { plan: string } }) {
           </div>
           <div className="flex justify-between">
             <span>Next Invoice</span>
-            <span>Pending PayPal</span>
+            <span>Awaiting setup</span>
           </div>
         </div>
         <Link
@@ -256,7 +270,7 @@ function BillingSidebar({ workspace }: { workspace: { plan: string } }) {
             <span className="flex h-9 w-12 items-center justify-center rounded border border-outline-variant/40 bg-white text-xs font-bold text-primary">PP</span>
             <div>
               <p className="font-semibold">PayPal billing</p>
-              <p className="text-xs text-on-surface-variant">Credential-gated setup</p>
+              <p className="text-xs text-on-surface-variant">Setup required</p>
             </div>
           </div>
           <CreditCard className="text-secondary" size={20} />
